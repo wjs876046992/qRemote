@@ -10,6 +10,9 @@
       "channel": "development"
     },
     "preview": {
+      "android": {
+        "buildType": "apk"
+      },
       "ios": {
         "autoIncrement": true
       },

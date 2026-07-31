@@ -20,6 +20,9 @@ module.exports = {
     // for native Info.plist configuration (see AGENTS.md "iOS Native
     // Workflow"). Hand-edits made directly under ios/ are machine-local and
     // can be rewritten by the next prebuild.
+    android: {
+      package: 'com.qRemote.app',
+    },
     ios: {
       supportsTablet: true,
       bundleIdentifier: 'com.qRemote.app',
@@ -99,7 +102,7 @@ module.exports = {
     extra: {
       router: {},
       eas: {
-        projectId: 'e2539074-777d-46d3-ae9e-9e584f9e9bb0',
+        projectId: '966955ee-920d-473b-bd03-02d74460eeb4',
       },
     },
     "updates": {
@@ -108,6 +111,6 @@ module.exports = {
     "runtimeVersion": {
       "policy": "appVersion"
   },
-    owner: 'taylorcox75',
+    owner: 'blechstephens-team',
   },
 };
