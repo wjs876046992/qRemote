@@ -61,7 +61,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         if (prefs.toastDuration && typeof prefs.toastDuration === 'number') {
           setDefaultDuration(prefs.toastDuration);
         }
-      } catch (error) {
+      } catch {
         // Use default 3000ms if loading fails
       }
     };

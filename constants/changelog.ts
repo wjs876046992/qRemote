@@ -17,8 +17,28 @@ export interface ChangelogRelease {
   /** Grouped release notes (New Features / Bugs Fixed / Maintenance). */
   sections?: ChangelogSection[];
 }
-
 export const CHANGELOG: ChangelogRelease[] = [
+  {
+    version: '3.8.35',
+    date: '2026-08-04',
+    sections: [
+      {
+        title: 'New Features',
+        items: [
+          "Automatic Torrent Management can now be toggled from a torrent's detail screen",
+          "Added Pause Downloads and Pause Uploads to the Transfer tab's quick actions",
+        ],
+      },
+      {
+        title: 'Bugs Fixed',
+        items: [
+          'Fixed unreadable button text on confirmation and input dialogs in dark mode',
+          "Fixed editing a tracker's URL sometimes losing the tracker instead of updating it",
+          'Disconnecting a server from Settings now confirms with a toast',
+        ],
+      },
+    ],
+  },
   {
     version: '3.8.34',
     date: '2026-07-27',
@@ -26,9 +46,10 @@ export const CHANGELOG: ChangelogRelease[] = [
       {
         title: 'New Features',
         items: [
+		  'Allow self-signed-certs',
           'Global seeding limits (ratio, seeding time, and what happens when reached) can now be set from the Transfer tab',
           'Added an Unlimited shortcut to the Max Ratio and Max Seeding Time editors on the Transfer tab',
-		  'File path now suggested from existing torrent paths and support for windows'
+          'File path now suggested from existing torrent paths and support for windows',
         ],
       },
       {
@@ -36,6 +57,7 @@ export const CHANGELOG: ChangelogRelease[] = [
         items: [
           'Fixed a false "couldn\'t read torrent file" error that could briefly flash when opening a .torrent file from a cold launch',
           'Fixed Transfer tab speed numbers getting cut off at higher speeds',
+          'Fixed server background restoration bug',
           'Fixed per-torrent speed limits sometimes applying the wrong units',
           'Fixed torrent cards showing "unlimited" for a ratio limit that actually follows the global limit',
           'Fixed the folder-path autocomplete list clipping suggestions instead of scrolling to them',

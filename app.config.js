@@ -1,5 +1,12 @@
 const packageJson = require('./package.json');
 
+// Set via eas.json's "development" build profile `env` block (NOT
+// EAS_BUILD_PROFILE — that's only injected in the remote build worker, not
+// during eas-cli's local pre-build config resolution, which is when
+// credentials/bundle id registration happens). A distinct bundle id lets the
+// dev-client build install side-by-side with the App Store build on device.
+const isDevelopmentBuild = process.env.APP_VARIANT === 'development';
+
 module.exports = {
   expo: {
     name: 'qRemote',
@@ -28,7 +35,7 @@ module.exports = {
     },
     ios: {
       supportsTablet: true,
-      bundleIdentifier: 'com.qRemote.app',
+      bundleIdentifier: isDevelopmentBuild ? 'com.taylorcox75.expogo' : 'com.qRemote.app',
       appStoreUrl: 'https://apps.apple.com/us/app/qremote-for-qbittorrent/id6756276747',
       infoPlist: {
         // Must be false: RN's StatusBar API (expo-status-bar / FocusAwareStatusBar)
@@ -108,12 +115,12 @@ module.exports = {
         projectId: '966955ee-920d-473b-bd03-02d74460eeb4',
       },
     },
-    "updates": {
-      "url": "https://u.expo.dev/e2539074-777d-46d3-ae9e-9e584f9e9bb0"
+    updates: {
+      url: 'https://u.expo.dev/e2539074-777d-46d3-ae9e-9e584f9e9bb0',
     },
-    "runtimeVersion": {
-      "policy": "appVersion"
-  },
+    runtimeVersion: {
+      policy: 'appVersion',
+    },
     owner: 'blechstephens-team',
   },
 };

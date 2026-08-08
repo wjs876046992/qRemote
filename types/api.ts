@@ -17,6 +17,8 @@ export interface ServerConfig {
   username: string;
   password: string;
   useHttps?: boolean;
+  /** When true, accept this server's (and its fallback's) TLS certificate even if untrusted — for self-signed setups. iOS only; see modules/insecure-cert-allowlist. */
+  allowInsecureCert?: boolean;
   bypassAuth?: boolean; // Skip authentication when local network auth is disabled
 
   /**
@@ -400,6 +402,8 @@ export interface SearchResult {
   descrLink: string;
   /** Name of the plugin that produced this result. Absent on older servers. */
   engineName?: string;
+  /** Unix timestamp (seconds) the torrent was published, if the plugin reported one (qBit 5.0+ / WebAPI >= 2.11.0). */
+  pubDate?: number;
 }
 
 export interface SearchResultsResponse {

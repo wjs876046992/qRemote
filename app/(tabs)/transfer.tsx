@@ -190,14 +190,17 @@ export default function TransferScreen() {
   const [limitInput, setLimitInput] = useState('');
 
   // Speed tracking
-  const { speedData, stats, addSpeedData, resetStats } = useSpeedTracker(
-    isConnected && !!transferInfo,
-  );
+  const { speedData, addSpeedData } = useSpeedTracker(isConnected && !!transferInfo);
 
   useEffect(() => {
     if (transferInfo && isConnected) {
       addSpeedData(transferInfo.dl_info_speed || 0, transferInfo.up_info_speed || 0);
     }
+    // Deliberately depends on the individual speed fields, not the whole
+    // transferInfo object — that object is a new reference on every poll
+    // tick even when speeds haven't changed, which would sample every tick
+    // instead of only on an actual speed change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transferInfo?.dl_info_speed, transferInfo?.up_info_speed, isConnected, addSpeedData]);
 
   const downloadGraphData = useMemo(
@@ -1011,6 +1014,44 @@ export default function TransferScreen() {
                   )}
                   <Text style={[styles.rowLabel, { color: colors.text }]}>
                     {t('screens.transfer.pauseAll')}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
+
+              <TouchableOpacity
+                style={styles.row}
+                onPress={handlePauseAllDownloads}
+                disabled={actionLoading !== null}
+              >
+                <View style={styles.rowLeading}>
+                  {actionLoading === 'pauseDL' ? (
+                    <ActivityIndicator size="small" color={colors.primary} />
+                  ) : (
+                    <Ionicons name="arrow-down" size={20} color={colors.primary} />
+                  )}
+                  <Text style={[styles.rowLabel, { color: colors.text }]}>
+                    {t('screens.transfer.pauseDownloads')}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
+
+              <TouchableOpacity
+                style={styles.row}
+                onPress={handlePauseAllUploads}
+                disabled={actionLoading !== null}
+              >
+                <View style={styles.rowLeading}>
+                  {actionLoading === 'pauseUL' ? (
+                    <ActivityIndicator size="small" color={colors.primary} />
+                  ) : (
+                    <Ionicons name="arrow-up" size={20} color={colors.primary} />
+                  )}
+                  <Text style={[styles.rowLabel, { color: colors.text }]}>
+                    {t('screens.transfer.pauseUploads')}
                   </Text>
                 </View>
               </TouchableOpacity>

@@ -133,7 +133,14 @@ function StackNavigator() {
   // closes over the mount-time effect scope) sees the current value instead of
   // a stale `undefined` — otherwise a cold-launch magnet/.torrent open is
   // silently queued and never dispatched.
+  // Deliberately assigned during render, not in an effect: the async
+  // getInitialURL() continuation below can resolve after a commit but before
+  // React flushes passive effects, and it must see nav-readiness as of the
+  // render that already committed. Cold-launch "Open In" has regressed
+  // repeatedly on this path — don't move this into an effect to satisfy the
+  // lint rule without testing a real cold launch first.
   const rootNavReadyRef = useRef(false);
+  // eslint-disable-next-line react-hooks/refs
   rootNavReadyRef.current = !!rootNavigationState?.key;
 
   useEffect(() => {
@@ -272,6 +279,11 @@ function StackNavigator() {
     return () => {
       subscription.remove();
     };
+    // showToast/t are only used for one edge-case error deep inside this
+    // handler — including them would tear down and re-register the Linking
+    // subscription whenever either identity changes, unrelated to the deep
+    // link state this effect actually cares about.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rootNavigationState?.key, router]);
 
   return (

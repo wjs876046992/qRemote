@@ -47,6 +47,9 @@ export default function ThemeSettingsScreen() {
 
   useEffect(() => {
     reloadCustomColors();
+    // Only run once on mount — reloadCustomColors isn't memoized in
+    // ThemeContext, so including it would re-fire this on every color change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleColorSelect = (key: keyof ColorTheme) => {
@@ -145,7 +148,7 @@ export default function ThemeSettingsScreen() {
                     await colorThemeManager.resetTorrentStateColors(isDark);
                     await reloadCustomColors();
                     showToast(t('toast.stateColorsReset'), 'success');
-                  } catch (error) {
+                  } catch {
                     showToast(t('errors.failedToResetStateColors'), 'error');
                   }
                 }}
@@ -247,7 +250,7 @@ export default function ThemeSettingsScreen() {
                     await colorThemeManager.resetCustomColors(isDark);
                     await reloadCustomColors();
                     showToast(t('toast.colorsReset'), 'success');
-                  } catch (error) {
+                  } catch {
                     showToast(t('errors.failedToResetColors'), 'error');
                   }
                 }}
@@ -384,7 +387,7 @@ export default function ThemeSettingsScreen() {
                 await colorThemeManager.saveCustomColors(isDark, updatedCustom);
                 await reloadCustomColors();
                 showToast(`${colorPickerKey} color updated`, 'success');
-              } catch (error) {
+              } catch {
                 showToast(t('errors.failedToSaveColor'), 'error');
               }
             }}

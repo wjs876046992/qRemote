@@ -54,10 +54,10 @@ function SwipeableServerItem({
   isLast: boolean;
 }) {
   const { t } = useTranslation();
-  const translateX = useRef(new Animated.Value(0)).current;
+  const [translateX] = useState(() => new Animated.Value(0));
   const isSwipeOpen = useRef(false);
 
-  const panResponder = useRef(
+  const [panResponder] = useState(() =>
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dx) > 10,
       onPanResponderGrant: () => {
@@ -92,7 +92,7 @@ function SwipeableServerItem({
         }
       },
     }),
-  ).current;
+  );
 
   const handleDelete = () => {
     isSwipeOpen.current = false;
@@ -201,13 +201,6 @@ export default function ServersSettingsScreen() {
   // undone, so it goes through ConfirmModal like every other destructive action.
   const [pendingDelete, setPendingDelete] = useState<ServerConfig | null>(null);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadServers();
-      loadPreferences();
-    }, []),
-  );
-
   const loadServers = useCallback(async () => {
     try {
       setLoading(true);
@@ -218,6 +211,10 @@ export default function ServersSettingsScreen() {
     } finally {
       setLoading(false);
     }
+    // showToast/t are only used for one error path. Including them would give
+    // loadServers a new identity whenever either changes, which re-fires the
+    // focus effect below — see the identity-stability note in ToastContext.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadPreferences = async () => {
@@ -228,6 +225,17 @@ export default function ServersSettingsScreen() {
       // Use defaults
     }
   };
+
+  useFocusEffect(
+    useCallback(() => {
+      loadServers();
+      loadPreferences();
+      // Reload on each focus only — loadServers/loadPreferences are stable
+      // enough for that, and depending on them risks re-firing this effect
+      // on unrelated re-renders.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []),
+  );
 
   const savePreference = async <K extends keyof AppPreferences>(
     key: K,
@@ -481,7 +489,7 @@ export default function ServersSettingsScreen() {
                     colors={colors}
                     onPress={() => handleEditServer(server)}
                     onConnect={() => handleConnect(server)}
-                    onDisconnect={() => disconnect()}
+                    onDisconnect={handleDisconnect}
                     onDelete={() => setPendingDelete(server)}
                     isLast={index === servers.length - 1}
                   />

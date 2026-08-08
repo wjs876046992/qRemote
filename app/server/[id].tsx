@@ -56,6 +56,7 @@ export default function EditServerScreen() {
   const [apiKey, setApiKey] = useState('');
   const [showAuthMethodPicker, setShowAuthMethodPicker] = useState(false);
   const [useHttps, setUseHttps] = useState(false);
+  const [allowInsecureCert, setAllowInsecureCert] = useState(false);
   const [useBasicAuth, setUseBasicAuth] = useState(false);
   const [basicAuthUsername, setBasicAuthUsername] = useState('');
   const [basicAuthPassword, setBasicAuthPassword] = useState('');
@@ -85,7 +86,7 @@ export default function EditServerScreen() {
 
   // Helper function to strip http:// or https:// prefix and trailing colons/slashes from host
   const stripProtocol = (hostString: string): string => {
-    return hostString.replace(/^(https?:\/\/)/i, '').replace(/[:\/]+$/, '');
+    return hostString.replace(/^(https?:\/\/)/i, '').replace(/[:/]+$/, '');
   };
 
   // Computed debug info for troubleshooting
@@ -206,7 +207,7 @@ App Version: ${APP_VERSION}`;
     try {
       await Clipboard.setStringAsync(debugText);
       showToast(t('toast.debugCopied'), 'success');
-    } catch (error) {
+    } catch {
       showToast(t('errors.failedToCopyDebug'), 'error');
     }
   };
@@ -218,10 +219,6 @@ App Version: ${APP_VERSION}`;
     }
     setTesting(false);
   };
-
-  useEffect(() => {
-    loadServer();
-  }, [id]);
 
   const loadServer = async () => {
     try {
@@ -236,6 +233,7 @@ App Version: ${APP_VERSION}`;
         setApiKey(server.apiKey || '');
         setAuthMode(getServerAuthMode(server));
         setUseHttps(server.useHttps || false);
+        setAllowInsecureCert(server.allowInsecureCert || false);
         setUseBasicAuth(server.useBasicAuth || false);
         setBasicAuthUsername(server.basicAuthUsername || '');
         setBasicAuthPassword(server.basicAuthPassword || '');
@@ -252,13 +250,19 @@ App Version: ${APP_VERSION}`;
         showToast(t('toast.serverNotFound'), 'error');
         router.back();
       }
-    } catch (error) {
+    } catch {
       showToast(t('errors.failedToLoadServer'), 'error');
       router.back();
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadServer();
+    // loadServer isn't memoized — only re-run when id changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   const handleSave = async () => {
     if (!name.trim() || !host.trim()) {
@@ -319,6 +323,7 @@ App Version: ${APP_VERSION}`;
         basePath: preservedBasePath, // Preserve existing basePath for backward compatibility
         ...applyServerAuthMode(authMode, { username, password, apiKey }),
         useHttps,
+        allowInsecureCert: useHttps ? allowInsecureCert : false,
         useBasicAuth: useProxyBasicAuth,
         basicAuthUsername: useProxyBasicAuth ? basicAuthUsername.trim() : '',
         basicAuthPassword: useProxyBasicAuth ? basicAuthPassword : '',
@@ -335,7 +340,7 @@ App Version: ${APP_VERSION}`;
       updateCurrentServer(server);
       showToast(t('toast.serverSaved'), 'success');
       router.back();
-    } catch (error) {
+    } catch {
       showToast(t('errors.failedToSaveServer'), 'error');
     } finally {
       setSaving(false);
@@ -360,7 +365,7 @@ App Version: ${APP_VERSION}`;
             }
             showToast(t('toast.serverDeleted', { name }), 'success');
             router.back();
-          } catch (error) {
+          } catch {
             showToast(t('errors.failedToDeleteServer'), 'error');
           }
         },
@@ -426,6 +431,7 @@ App Version: ${APP_VERSION}`;
         basePath: preservedBasePath,
         ...applyServerAuthMode(authMode, { username, password, apiKey }),
         useHttps,
+        allowInsecureCert: useHttps ? allowInsecureCert : false,
         useBasicAuth: useProxyBasicAuth,
         basicAuthUsername: useProxyBasicAuth ? basicAuthUsername.trim() : '',
         basicAuthPassword: useProxyBasicAuth ? basicAuthPassword : '',
@@ -799,6 +805,26 @@ App Version: ${APP_VERSION}`;
                   thumbColor="#FFFFFF"
                 />
               </SettingRow>
+              {useHttps && (
+                <>
+                  <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
+                  <SettingRow
+                    icon="warning-outline"
+                    iconColor={colors.warning}
+                    label={t('server.allowInsecureCert')}
+                  >
+                    <Switch
+                      value={allowInsecureCert}
+                      onValueChange={setAllowInsecureCert}
+                      trackColor={{ false: colors.surfaceOutline, true: colors.warning }}
+                      thumbColor="#FFFFFF"
+                    />
+                  </SettingRow>
+                  <Text style={[styles.hintText, { color: colors.textSecondary }]}>
+                    {t('server.allowInsecureCertHint')}
+                  </Text>
+                </>
+              )}
             </View>
           </View>
 

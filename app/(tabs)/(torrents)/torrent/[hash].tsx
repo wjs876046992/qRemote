@@ -183,6 +183,7 @@ export default function TorrentDetail() {
   const [optFlPiece, setOptFlPiece] = useState<boolean | null>(null);
   const [optSuperSeeding, setOptSuperSeeding] = useState<boolean | null>(null);
   const [optForceStart, setOptForceStart] = useState<boolean | null>(null);
+  const [optAutoTmm, setOptAutoTmm] = useState<boolean | null>(null);
 
   // ── Data loading ──────────────────────────────────────────────────────
 
@@ -191,6 +192,8 @@ export default function TorrentDetail() {
     if (hash && isConnected) {
       loadTorrentData();
     }
+    // loadTorrentData isn't memoized — only re-run when hash/isConnected change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hash, isConnected]);
 
   const pushSpeedSample = (info: TorrentInfo | null | undefined) => {
@@ -489,18 +492,6 @@ export default function TorrentDetail() {
     }
   };
 
-  const handleCopyHash = async () => {
-    try {
-      if (torrent?.hash) {
-        await Clipboard.setStringAsync(torrent.hash);
-        haptics.success();
-        showToast(t('toast.hashCopied'), 'success');
-      }
-    } catch (error: unknown) {
-      showToast(getErrorMessage(error), 'error');
-    }
-  };
-
   const handleCopyPath = async (value: string) => {
     try {
       await Clipboard.setStringAsync(value);
@@ -716,12 +707,15 @@ export default function TorrentDetail() {
   };
 
   const handleAutomaticManagement = async () => {
+    if (actionLoading) return;
     try {
       setActionLoading(true);
       const isAutoManaged = torrent?.auto_tmm || false;
+      setOptAutoTmm(!isAutoManaged);
       await torrentsApi.setAutomaticTorrentManagement([torrent!.hash], !isAutoManaged);
       await new Promise((resolve) => setTimeout(resolve, 250));
       await loadTorrentData();
+      setOptAutoTmm(null);
       setActionLoading(false);
       showToast(
         t('toast.autoManagementToggled', {
@@ -730,6 +724,7 @@ export default function TorrentDetail() {
         'success',
       );
     } catch (error: unknown) {
+      setOptAutoTmm(null);
       showToast(getErrorMessage(error), 'error');
       setActionLoading(false);
     }
@@ -1790,6 +1785,11 @@ export default function TorrentDetail() {
             {renderRows([
               tappableRow(t('torrentDetail.priority'), priorityDisplay, () =>
                 setPriorityPickerVisible(true),
+              ),
+              toggleRow(
+                t('torrentDetail.autoManagement'),
+                optAutoTmm ?? torrent.auto_tmm ?? false,
+                handleAutomaticManagement,
               ),
               toggleRow(
                 t('torrentDetail.sequentialDownload'),

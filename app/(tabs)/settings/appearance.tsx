@@ -15,8 +15,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { FocusAwareStatusBar } from '@/components/FocusAwareStatusBar';
 import { OptionPicker, OptionPickerItem } from '@/components/OptionPicker';
 import { storageService } from '@/services/storage';
-import { AppPreferences } from '@/types/preferences';
-import { getStoredLanguage, setStoredLanguage } from '@/i18n';
+import { setStoredLanguage } from '@/i18n';
 import { spacing, borderRadius } from '@/constants/spacing';
 import { shadows } from '@/constants/shadows';
 import { typography } from '@/constants/typography';
@@ -24,7 +23,7 @@ import { typography } from '@/constants/typography';
 export default function AppearanceSettingsScreen() {
   const { t, i18n } = useTranslation();
   const router = useRouter();
-  const { isDark, toggleTheme, colors, reloadCustomColors } = useTheme();
+  const { isDark, colors } = useTheme();
 
   const [autoRefreshInterval, setAutoRefreshInterval] = useState('1000');
   const [cardViewMode, setCardViewMode] = useState<'compact' | 'expanded'>('compact');
@@ -39,12 +38,6 @@ export default function AppearanceSettingsScreen() {
     { label: 'Русский', value: 'ru', icon: 'language-outline' },
   ];
 
-  useFocusEffect(
-    useCallback(() => {
-      loadPreferences();
-    }, []),
-  );
-
   const loadPreferences = async () => {
     try {
       const prefs = await storageService.getPreferences();
@@ -57,17 +50,11 @@ export default function AppearanceSettingsScreen() {
     }
   };
 
-  const savePreference = async <K extends keyof AppPreferences>(
-    key: K,
-    value: AppPreferences[K],
-  ) => {
-    try {
-      const prefs = await storageService.getPreferences();
-      await storageService.savePreferences({ ...prefs, [key]: value });
-    } catch {
-      // Ignore save errors
-    }
-  };
+  useFocusEffect(
+    useCallback(() => {
+      loadPreferences();
+    }, []),
+  );
 
   const saveAutoRefreshInterval = async (interval: string) => {
     try {

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Text, StyleSheet, Animated, TouchableOpacity, Platform, StatusBar } from 'react-native';
 import { useSafeAreaInsets, initialWindowMetrics } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -35,8 +35,25 @@ export function Toast({
     insets.top ||
     initialWindowMetrics?.insets.top ||
     (Platform.OS === 'ios' ? 47 : StatusBar.currentHeight || 24);
-  const translateY = useRef(new Animated.Value(-100)).current;
-  const opacity = useRef(new Animated.Value(0)).current;
+  const [translateY] = useState(() => new Animated.Value(-100));
+  const [opacity] = useState(() => new Animated.Value(0));
+
+  const hide = useCallback(() => {
+    Animated.parallel([
+      Animated.timing(translateY, {
+        toValue: -100,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+      Animated.timing(opacity, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      onHide?.();
+    });
+  }, [translateY, opacity, onHide]);
 
   useEffect(() => {
     // Slide in
@@ -60,24 +77,7 @@ export function Toast({
     }, duration);
 
     return () => clearTimeout(timer);
-  }, []);
-
-  const hide = () => {
-    Animated.parallel([
-      Animated.timing(translateY, {
-        toValue: -100,
-        duration: 200,
-        useNativeDriver: true,
-      }),
-      Animated.timing(opacity, {
-        toValue: 0,
-        duration: 200,
-        useNativeDriver: true,
-      }),
-    ]).start(() => {
-      onHide?.();
-    });
-  };
+  }, [duration, hide, opacity, translateY]);
 
   const getIcon = (): React.ComponentProps<typeof Ionicons>['name'] => {
     switch (type) {
@@ -105,7 +105,7 @@ export function Toast({
     }
   };
 
-  const topOffset = topOffsetOverride ?? safeTop + 8;
+  const topOffset = topOffsetOverride ?? safeTop + spacing.sm;
 
   const toastContent = (
     <Animated.View
@@ -142,8 +142,8 @@ export function Toast({
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    left: spacing.lg,
-    right: spacing.lg,
+    left: spacing.xxl,
+    right: spacing.xxl,
     borderRadius: borderRadius.medium,
     zIndex: 9999,
   },

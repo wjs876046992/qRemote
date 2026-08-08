@@ -55,14 +55,6 @@ export default function AboutScreen() {
   const [buildInfo, setBuildInfo] = useState<BuildInfo | null>(null);
   const [loadingAppInfo, setLoadingAppInfo] = useState(false);
 
-  useFocusEffect(
-    useCallback(() => {
-      if (isConnected) {
-        loadAppInfo();
-      }
-    }, [isConnected]),
-  );
-
   const loadAppInfo = async () => {
     try {
       setLoadingAppInfo(true);
@@ -78,6 +70,14 @@ export default function AboutScreen() {
       setLoadingAppInfo(false);
     }
   };
+
+  useFocusEffect(
+    useCallback(() => {
+      if (isConnected) {
+        loadAppInfo();
+      }
+    }, [isConnected]),
+  );
 
   return (
     <>
@@ -116,8 +116,9 @@ export default function AboutScreen() {
                 icon="logo-react"
                 label="React Native"
                 value={
-                  `${Platform.constants.reactNativeVersion?.major}.${Platform.constants.reactNativeVersion?.minor}.${Platform.constants.reactNativeVersion?.patch}` ||
-                  'N/A'
+                  Platform.constants.reactNativeVersion
+                    ? `${Platform.constants.reactNativeVersion.major}.${Platform.constants.reactNativeVersion.minor}.${Platform.constants.reactNativeVersion.patch}`
+                    : 'N/A'
                 }
                 colors={colors}
               />

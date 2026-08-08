@@ -13,7 +13,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Modal,
-  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -69,12 +68,6 @@ export default function TorrentFilesScreen() {
     onConfirm: (value: string) => void;
   }>({ title: '', onConfirm: () => {} });
 
-  useEffect(() => {
-    if (hash && isConnected) {
-      loadFiles();
-    }
-  }, [hash, isConnected]);
-
   const loadFiles = async () => {
     try {
       setLoading(true);
@@ -99,6 +92,14 @@ export default function TorrentFilesScreen() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (hash && isConnected) {
+      loadFiles();
+    }
+    // loadFiles isn't memoized — only re-run when hash/isConnected change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hash, isConnected]);
 
   const formatSize = (bytes: number): string => {
     if (bytes === 0) return '0 B';

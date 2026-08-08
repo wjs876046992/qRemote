@@ -54,6 +54,7 @@ export default function AddServerScreen() {
   const [apiKey, setApiKey] = useState('');
   const [showAuthMethodPicker, setShowAuthMethodPicker] = useState(false);
   const [useHttps, setUseHttps] = useState(false);
+  const [allowInsecureCert, setAllowInsecureCert] = useState(false);
   const [useBasicAuth, setUseBasicAuth] = useState(false);
   const [basicAuthUsername, setBasicAuthUsername] = useState('');
   const [basicAuthPassword, setBasicAuthPassword] = useState('');
@@ -77,7 +78,7 @@ export default function AddServerScreen() {
 
   // Helper function to strip http:// or https:// prefix and trailing colons/slashes from host
   const stripProtocol = (hostString: string): string => {
-    return hostString.replace(/^(https?:\/\/)/i, '').replace(/[:\/]+$/, '');
+    return hostString.replace(/^(https?:\/\/)/i, '').replace(/[:/]+$/, '');
   };
 
   // Computed debug info for troubleshooting
@@ -198,7 +199,7 @@ App Version: ${APP_VERSION}`;
     try {
       await Clipboard.setStringAsync(debugText);
       showToast(t('toast.debugCopied'), 'success');
-    } catch (error) {
+    } catch {
       showToast(t('errors.failedToCopyDebug'), 'error');
     }
   };
@@ -269,6 +270,7 @@ App Version: ${APP_VERSION}`;
         basePath: '/',
         ...applyServerAuthMode(authMode, { username, password, apiKey }),
         useHttps,
+        allowInsecureCert: useHttps ? allowInsecureCert : false,
         useBasicAuth: useProxyBasicAuth,
         basicAuthUsername: useProxyBasicAuth ? basicAuthUsername.trim() : '',
         basicAuthPassword: useProxyBasicAuth ? basicAuthPassword : '',
@@ -297,7 +299,7 @@ App Version: ${APP_VERSION}`;
       }
 
       router.back();
-    } catch (error) {
+    } catch {
       showToast(t('errors.failedToSaveServer'), 'error');
     } finally {
       setLoading(false);
@@ -358,6 +360,7 @@ App Version: ${APP_VERSION}`;
         port: portNum,
         ...applyServerAuthMode(authMode, { username, password, apiKey }),
         useHttps,
+        allowInsecureCert: useHttps ? allowInsecureCert : false,
         useBasicAuth: useProxyBasicAuth,
         basicAuthUsername: useProxyBasicAuth ? basicAuthUsername.trim() : '',
         basicAuthPassword: useProxyBasicAuth ? basicAuthPassword : '',
@@ -726,6 +729,26 @@ App Version: ${APP_VERSION}`;
                   thumbColor="#FFFFFF"
                 />
               </SettingRow>
+              {useHttps && (
+                <>
+                  <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
+                  <SettingRow
+                    icon="warning-outline"
+                    iconColor={colors.warning}
+                    label={t('server.allowInsecureCert')}
+                  >
+                    <Switch
+                      value={allowInsecureCert}
+                      onValueChange={setAllowInsecureCert}
+                      trackColor={{ false: colors.surfaceOutline, true: colors.warning }}
+                      thumbColor="#FFFFFF"
+                    />
+                  </SettingRow>
+                  <Text style={[styles.hintText, { color: colors.textSecondary }]}>
+                    {t('server.allowInsecureCertHint')}
+                  </Text>
+                </>
+              )}
             </View>
           </View>
 

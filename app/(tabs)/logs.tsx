@@ -59,12 +59,6 @@ export default function LogsScreen() {
     }
   }
 
-  useEffect(() => {
-    if (isConnected) {
-      loadLogs();
-    }
-  }, [isConnected, activeTab, filters]);
-
   const loadLogs = async () => {
     try {
       setLoading(true);
@@ -95,13 +89,21 @@ export default function LogsScreen() {
           setLastPeerLogId(logs[0]?.id);
         }
       }
-    } catch (error) {
+    } catch {
       // Ignore log loading errors
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
+
+  useEffect(() => {
+    if (isConnected) {
+      loadLogs();
+    }
+    // loadLogs isn't memoized — only re-run when these deps change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected, activeTab, filters]);
 
   const handleRefresh = async () => {
     setRefreshing(true);

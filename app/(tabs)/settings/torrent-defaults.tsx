@@ -20,7 +20,7 @@ import { useToast } from '@/context/ToastContext';
 import { FocusAwareStatusBar } from '@/components/FocusAwareStatusBar';
 import { OptionPicker, OptionPickerItem } from '@/components/OptionPicker';
 import { InputModal } from '@/components/InputModal';
-import { PathAutocompleteInput } from '@/components/PathAutocompleteInput';
+import { PathAutocompleteInput, isWindowsStylePath } from '@/components/PathAutocompleteInput';
 import { storageService } from '@/services/storage';
 import { applicationApi } from '@/services/api/application';
 import { apiClient } from '@/services/api/client';
@@ -224,16 +224,6 @@ export default function TorrentDefaultsScreen() {
     },
   ];
 
-  useFocusEffect(
-    useCallback(() => {
-      loadPreferences();
-      if (isConnected) {
-        loadDefaultSavePath();
-        loadCategories();
-      }
-    }, [isConnected]),
-  );
-
   const loadCategories = async () => {
     try {
       // The torrent list's rid-based sync only reports categories *added*
@@ -338,6 +328,16 @@ export default function TorrentDefaultsScreen() {
       // Ignore if not connected or API error
     }
   };
+
+  useFocusEffect(
+    useCallback(() => {
+      loadPreferences();
+      if (isConnected) {
+        loadDefaultSavePath();
+        loadCategories();
+      }
+    }, [isConnected]),
+  );
 
   const savePreference = async <K extends keyof AppPreferences>(
     key: K,
@@ -1988,7 +1988,12 @@ export default function TorrentDefaultsScreen() {
               placeholder={
                 // Illustrative only — the field's actual value never gets set
                 // to this string; an empty save path really is sent as "".
-                `${defaultSavePath || t('screens.settings.categorySavePathPlaceholderDefault')}/${editCategoryName || editingCategory} ${t('screens.settings.categorySavePathPlaceholderSuffix')}`
+                (() => {
+                  const base =
+                    defaultSavePath || t('screens.settings.categorySavePathPlaceholderDefault');
+                  const sep = isWindowsStylePath(base) ? '\\' : '/';
+                  return `${base}${sep}${editCategoryName || editingCategory} ${t('screens.settings.categorySavePathPlaceholderSuffix')}`;
+                })()
               }
               placeholderTextColor={colors.textSecondary}
             />
@@ -2005,7 +2010,7 @@ export default function TorrentDefaultsScreen() {
                 style={[modalStyles.button, { backgroundColor: colors.primary }]}
                 onPress={handleSaveCategoryEdit}
               >
-                <Text style={[modalStyles.buttonText, { color: colors.surface }]}>
+                <Text style={[modalStyles.buttonText, { color: colors.onAccent }]}>
                   {t('common.confirm')}
                 </Text>
               </TouchableOpacity>

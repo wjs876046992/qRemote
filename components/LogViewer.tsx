@@ -14,7 +14,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/context/ThemeContext';
@@ -33,9 +32,24 @@ interface LogViewerProps {
 export function LogViewer({ visible, onClose, onClear, refreshTrigger }: LogViewerProps) {
   const { colors } = useTheme();
   const { t } = useTranslation();
-  const insets = useSafeAreaInsets();
   const [logs, setLogs] = useState<StoredLogEntry[]>([]);
   const [loading, setLoading] = useState(false);
+
+  const loadLogs = async () => {
+    setLoading(true);
+    try {
+      const storedLogs = await logStorage.getLogs();
+      if (storedLogs && storedLogs.length > 0) {
+        setLogs(storedLogs.sort((a, b) => b.id - a.id));
+      } else {
+        setLogs([]);
+      }
+    } catch {
+      setLogs([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (visible) {
@@ -48,24 +62,6 @@ export function LogViewer({ visible, onClose, onClear, refreshTrigger }: LogView
       // Don't clear logs when modal closes - keep them in storage
     }
   }, [visible, refreshTrigger]);
-
-  const loadLogs = async () => {
-    setLoading(true);
-    try {
-      const storedLogs = await logStorage.getLogs();
-      console.log('Loaded logs from storage:', storedLogs.length);
-      if (storedLogs && storedLogs.length > 0) {
-        setLogs(storedLogs.sort((a, b) => b.id - a.id));
-      } else {
-        setLogs([]);
-      }
-    } catch (error) {
-      console.error('Failed to load logs:', error);
-      setLogs([]);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleClear = async () => {
     try {
@@ -186,7 +182,7 @@ export function LogViewer({ visible, onClose, onClear, refreshTrigger }: LogView
                 >
                   <View style={styles.logHeader}>
                     <View style={[styles.logTypeBadge, { backgroundColor: colors.primary }]}>
-                      <Text style={[styles.logTypeText, { color: colors.surface }]}>
+                      <Text style={[styles.logTypeText, { color: colors.onAccent }]}>
                         {getLogTypeLabel(log.type)}
                       </Text>
                     </View>

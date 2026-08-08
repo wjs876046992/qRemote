@@ -7,7 +7,10 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "channel": "development"
+      "channel": "development",
+      "env": {
+        "APP_VARIANT": "development"
+      }
     },
     "preview": {
       "android": {
@@ -23,7 +26,7 @@
         "autoIncrement": true
       },
       "channel": "production"
-    },
+    }
   },
   "submit": {
     "production": {

@@ -12,6 +12,14 @@ export interface ThemeColors {
   textSecondary: string;
   primary: string;
   primaryOpac?: string;
+  /**
+   * Foreground for text/icons sitting ON a filled accent background
+   * (primary/error/success buttons and badges). Deliberately white in every
+   * palette — those fills are saturated in both light and dark, so this must
+   * NOT be derived from `surface`, which flips to near-black in dark mode and
+   * made filled-button labels unreadable there.
+   */
+  onAccent: string;
   error: string;
   success: string;
   warning: string;
@@ -73,6 +81,7 @@ const lightColors = {
   textSecondary: 'rgba(142, 142, 147, 1)',
   primary: 'rgba(0, 122, 255, 1)',
   primaryOpac: 'rgba(0, 122, 255, 0.15)',
+  onAccent: '#FFFFFF',
   error: 'rgba(255, 59, 48, 1)',
   success: 'rgba(52, 199, 89, 1)',
   warning: 'rgba(255, 149, 0, 1)',
@@ -97,6 +106,7 @@ const darkColors = {
   textSecondary: 'rgba(190, 190, 190, 1)',
   primary: 'rgba(10, 132, 255, 1)',
   primaryOpac: 'rgba(10, 132, 255, 0.2)',
+  onAccent: '#FFFFFF',
   error: 'rgba(255, 69, 58, 1)',
   success: 'rgba(52, 199, 89, 1)',
   warning: 'rgba(255, 149, 0, 1)',
@@ -122,6 +132,7 @@ const trueBlackColors = {
   textSecondary: 'rgba(190, 190, 190, 1)',
   primary: 'rgba(10, 132, 255, 1)',
   primaryOpac: 'rgba(10, 132, 255, 0.2)',
+  onAccent: '#FFFFFF',
   error: 'rgba(255, 69, 58, 1)',
   success: 'rgba(52, 199, 89, 1)',
   warning: 'rgba(255, 149, 0, 1)',
@@ -152,6 +163,30 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const effectiveSystem = systemColorScheme ?? initialSystemScheme ?? null;
   const isDark = resolveIsDark(themeMode, effectiveSystem);
 
+  const loadThemePreference = async () => {
+    try {
+      const preferences = await storageService.getPreferences();
+      const mode = normalizeThemeMode(
+        (preferences as { themeMode?: unknown }).themeMode,
+        preferences.theme,
+      );
+      setThemeModeState(mode);
+    } catch {
+      // Ignore theme loading errors — fall back to default 'system'
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const loadCustomColors = async () => {
+    try {
+      const custom = await colorThemeManager.getCustomColors(isDark);
+      setCustomColors(custom);
+    } catch {
+      // Ignore color loading errors
+    }
+  };
+
   useEffect(() => {
     loadThemePreference();
   }, []);
@@ -165,30 +200,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDark, isLoading]);
 
-  const loadThemePreference = async () => {
-    try {
-      const preferences = await storageService.getPreferences();
-      const mode = normalizeThemeMode(
-        (preferences as { themeMode?: unknown }).themeMode,
-        preferences.theme,
-      );
-      setThemeModeState(mode);
-    } catch (error) {
-      // Ignore theme loading errors — fall back to default 'system'
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const loadCustomColors = async () => {
-    try {
-      const custom = await colorThemeManager.getCustomColors(isDark);
-      setCustomColors(custom);
-    } catch (error) {
-      // Ignore color loading errors
-    }
-  };
-
   const persistThemeMode = async (mode: ThemeMode, effectiveDark: boolean) => {
     try {
       const preferences = await storageService.getPreferences();
@@ -199,7 +210,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         // exported settings still reflect the current appearance.
         theme: effectiveDark ? 'dark' : 'light',
       });
-    } catch (error) {
+    } catch {
       // Ignore theme saving errors
     }
   };
@@ -211,7 +222,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     try {
       const custom = await colorThemeManager.getCustomColors(nextIsDark);
       setCustomColors(custom);
-    } catch (error) {
+    } catch {
       // Ignore color loading errors
     }
   };
