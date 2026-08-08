@@ -22,6 +22,9 @@ module.exports = {
     // can be rewritten by the next prebuild.
     android: {
       package: 'com.qRemote.app',
+      // Allow HTTP (cleartext) connections — Android 9+ blocks them by default.
+      // Required for local LAN qBittorrent servers using http://192.168.x.x
+      usesCleartextTraffic: true,
     },
     ios: {
       supportsTablet: true,
