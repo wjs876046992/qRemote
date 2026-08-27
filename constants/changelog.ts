@@ -19,6 +19,66 @@ export interface ChangelogRelease {
 }
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    version: '3.8.40',
+    date: '2026-08-23',
+    sections: [
+      {
+        title: 'New Features',
+        items: [
+          'Torrents can now be sorted by priority',
+          'Added Increase Priority and Decrease Priority actions to the torrent menu',
+          'Added support for custom HTTP headers per server, for tunnels and proxies with their own token-based authentication',
+        ],
+      },
+    ],
+  },
+  {
+    version: '3.8.39',
+    date: '2026-08-21',
+    sections: [
+      {
+        title: 'New Features',
+        items: ['Servers can now be given a custom icon and badge color'],
+      },
+    ],
+  },
+  {
+    version: '3.8.38',
+    date: '2026-08-14',
+    sections: [
+      {
+        title: 'New Features',
+        items: ['Trackers now show each tracker’s reported seed and leech counts'],
+      },
+    ],
+  },
+  {
+    version: '3.8.37',
+    date: '2026-08-12',
+    sections: [
+      {
+        title: 'Bugs Fixed',
+        items: [
+          'Fixed opening a magnet link from the background briefly showing the Add Torrent dialog before dismissing it',
+        ],
+      },
+    ],
+  },
+  {
+    version: '3.8.36',
+    date: '2026-08-09',
+    sections: [
+      {
+        title: 'New Features',
+        items: ['Added new add dialogue to the search page + cart like functionality'],
+      },
+      {
+        title: 'Bugs Fixed',
+        items: [],
+      },
+    ],
+  },
+  {
     version: '3.8.35',
     date: '2026-08-04',
     sections: [
@@ -46,7 +106,7 @@ export const CHANGELOG: ChangelogRelease[] = [
       {
         title: 'New Features',
         items: [
-		  'Allow self-signed-certs',
+          'Allow self-signed-certs',
           'Global seeding limits (ratio, seeding time, and what happens when reached) can now be set from the Transfer tab',
           'Added an Unlimited shortcut to the Max Ratio and Max Seeding Time editors on the Transfer tab',
           'File path now suggested from existing torrent paths and support for windows',

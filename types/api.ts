@@ -48,6 +48,16 @@ export interface ServerConfig {
   useApiKey?: boolean;
   /** qBittorrent API key, sent as `Authorization: Bearer <apiKey>` (in-memory only; stored in SecureStore). */
   apiKey?: string;
+
+  /** Ionicons glyph name used for this server's badge (see constants/serverIcons.ts). Falls back to DEFAULT_SERVER_ICON when unset. */
+  icon?: string;
+  /** Hex color for the server's icon badge. Falls back to utils/server.ts avatarColor(name) when unset. */
+  iconColor?: string;
+
+  /** When true, send extra HTTP headers on every request (for tunnels/proxies with their own header-based auth, e.g. Pangolin). */
+  useCustomHeaders?: boolean;
+  /** Custom header name/value pairs (in-memory + SecureStore only — values are treated as secrets). */
+  customHeaders?: { key: string; value: string }[];
 }
 
 export type ServerEndpointKind = 'primary' | 'fallback';
@@ -344,6 +354,10 @@ export interface Tracker {
   url: string;
   status: number;
   tier: number;
+  num_peers: number;
+  num_seeds: number;
+  num_leeches: number;
+  num_downloaded: number;
   msg: string;
 }
 

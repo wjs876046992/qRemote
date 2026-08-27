@@ -94,7 +94,8 @@
       "ratioLimit": "分享率限制",
       "seedingTimeLimit": "做种时间限制",
       "cookie": "Cookie",
-      "cookiePlaceholder": "可选 Cookie 头部值"
+      "cookiePlaceholder": "可选 Cookie 头部值",
+      "fromSearch": "来自搜索"
     },
     "settings": {
       "title": "设置",
@@ -358,7 +359,9 @@
         "category": "分类",
         "progress": "进度 %",
         "addedTime": "时间"
-      }
+      },
+      "searchAddOpensDialogue": "搜索中的 + 打开对话框",
+      "searchAddOpensDialogueHint": "点击搜索结果上的 + 将打开添加种子对话框，而不是直接添加。"
     },
     "transfer": {
       "title": "传输",
@@ -464,6 +467,8 @@
     },
     "trackers": {
       "title": "Manage Trackers",
+      "seeds": "做种",
+      "leeches": "下载者",
       "newTrackerUrl": "New Tracker URL",
       "editTrackerUrl": "编辑 Tracker URL",
       "addNewTracker": "Add New Tracker",
@@ -524,7 +529,15 @@
       "openSite": "Open site",
       "copyLink": "Copy link",
       "shareLink": "Share link",
-      "linkCopied": "Link copied"
+      "linkCopied": "Link copied",
+      "addToCart": "加入队列",
+      "removeFromCart": "从队列中移除",
+      "addNow": "立即使用默认设置添加",
+      "cartTitle": "添加队列",
+      "cartEmpty": "队列中还没有内容",
+      "cartClearAll": "清空全部",
+      "cartCheckout": "继续（{{count}}）",
+      "cartAccessibility": "添加队列，共 {{count}} 个种子"
     },
     "rss": {
       "feedsTitle": "RSS 订阅",
@@ -628,13 +641,17 @@
     "enterKbs": "输入 KiB/s",
     "fallbackHost": "备用主机或 IP",
     "proxyUsername": "代理用户名",
-    "proxyPassword": "代理密码"
+    "proxyPassword": "代理密码",
+    "headerName": "请求头名称",
+    "headerValue": "请求头值"
   },
   "actions": {
     "resume": "恢复",
     "pause": "暂停",
     "torrentMenu": "种子操作",
     "forceStart": "强制开始",
+    "increasePriority": "提高优先级",
+    "decreasePriority": "降低优先级",
     "maxPriority": "最高优先级",
     "minPriority": "最低优先级",
     "setDlLimit": "设置下载限速",
@@ -720,6 +737,11 @@
     "hostAddress": "主机地址",
     "port": "端口",
     "gotIt": "知道了",
+    "appearance": "外观",
+    "icon": "图标",
+    "badgeColor": "徽章颜色",
+    "chooseIcon": "选择图标",
+    "customColor": "自定义颜色",
     "fallbackUrl": "备用 URL",
     "useFallback": "使用备用 URL",
     "useFallbackHint": "主 URL 失败时尝试备用 URL",
@@ -739,8 +761,16 @@
     "debugLoginApi": "登录 API",
     "debugEmpty": "（空）",
     "debugDefaultPort": "默认（80/443）",
+    "debugCustomHeaders": "自定义请求头",
+    "debugCustomHeadersValue": "{{names}}（值已隐藏）",
+    "debugCustomHeadersNone": "无",
     "useBasicAuthHint": "当密码保护的代理保护服务器时需要启用",
-    "apiKeyProxyConflict": "代理 Basic 认证无法与 API 密钥同时使用，两者都使用 Authorization 请求头"
+    "apiKeyProxyConflict": "代理 Basic 认证无法与 API 密钥同时使用，两者都使用 Authorization 请求头",
+    "customHeaders": "自定义请求头",
+    "useCustomHeaders": "自定义 HTTP 请求头",
+    "useCustomHeadersHint": "在每次请求中附加额外的请求头，适用于使用自有请求头认证的隧道或代理（例如 Pangolin）",
+    "addHeader": "添加请求头",
+    "removeHeader": "删除请求头"
   },
   "torrentDetail": {
     "notFound": "未找到种子",
@@ -970,6 +1000,7 @@
     "size": "大小",
     "progress": "进度",
     "ulRatio": "上传比",
+    "priority": "优先级",
     "dlSpeed": "下载速度",
     "ulSpeed": "上传速度"
   },
@@ -989,6 +1020,8 @@
     "pathCopied": "路径已复制到剪贴板",
     "noMagnetAvailable": "无磁力链接可用",
     "prioritySetMax": "优先级已设为最高",
+    "priorityIncreased": "优先级已提高",
+    "priorityDecreased": "优先级已降低",
     "downloadLimitSet": "下载限速已设为 {{value}}",
     "uploadLimitSet": "上传限速已设为 {{value}}",
     "dlLimitSetKb": "下载限速已设为 {{value}} KiB/s",
@@ -1056,6 +1089,8 @@
     "fillNameAndHost": "请填写服务器名称和主机",
     "fillUsernamePassword": "请填写用户名和密码",
     "fillBasicAuthUsername": "请填写 Basic 认证的代理用户名",
+    "fillCustomHeaderFields": "请为每个自定义请求头填写名称和值，或删除空白项",
+    "reservedHeaderName": "“{{name}}” 由 qRemote 管理，不能用作自定义请求头",
     "fillApiKey": "请输入 API 密钥",
     "validPort": "请输入有效端口号 (1-65535)",
     "fillFallbackHost": "请输入备用主机",

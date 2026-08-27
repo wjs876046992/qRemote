@@ -86,6 +86,7 @@ export default function TorrentsScreen() {
     magnet?: string | string[];
     torrentFileUri?: string | string[];
     torrentFileName?: string | string[];
+    sourceUrl?: string | string[];
   }>();
 
   // State
@@ -107,7 +108,7 @@ export default function TorrentsScreen() {
   const [bulkTagMode, setBulkTagMode] = useState<'add' | 'remove' | null>(null);
   const [bulkTagDraft, setBulkTagDraft] = useState<string[]>([]);
   const [sortBy, setSortBy] = useState<
-    'name' | 'size' | 'progress' | 'dlspeed' | 'upspeed' | 'ratio' | 'added_on'
+    'name' | 'size' | 'progress' | 'dlspeed' | 'upspeed' | 'ratio' | 'priority' | 'added_on'
   >('added_on');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [showSortMenu, setShowSortMenu] = useState(false);
@@ -136,6 +137,7 @@ export default function TorrentsScreen() {
 
   const lastAppliedMagnetRef = useRef<{ value: string; at: number } | null>(null);
   const lastAppliedTorrentFileRef = useRef<{ value: string; at: number } | null>(null);
+  const lastAppliedSourceUrlRef = useRef<{ value: string; at: number } | null>(null);
 
   // Action menu state
   const [selectedTorrent, setSelectedTorrent] = useState<TorrentInfo | null>(null);
@@ -344,6 +346,31 @@ export default function TorrentsScreen() {
     void handleIncomingMagnet();
   }, [params.magnet, router]);
 
+  // Search tab's + button (#217), compact-dialogue branch — search.tsx has
+  // already decided the variant before navigating here, so unlike the magnet
+  // handoff above this never redirects to the full screen. Uses a distinct
+  // sourceUrl param (set verbatim, not run through extractMagnetLink) because
+  // Search results are often plain https:// download URLs, not magnets.
+  useEffect(() => {
+    const rawSourceUrl = Array.isArray(params.sourceUrl) ? params.sourceUrl[0] : params.sourceUrl;
+    const sourceUrl = rawSourceUrl?.trim();
+    if (!sourceUrl) return;
+
+    const now = Date.now();
+    if (
+      lastAppliedSourceUrlRef.current &&
+      lastAppliedSourceUrlRef.current.value === sourceUrl &&
+      now - lastAppliedSourceUrlRef.current.at < 1500
+    ) {
+      return;
+    }
+    lastAppliedSourceUrlRef.current = { value: sourceUrl, at: now };
+
+    setTorrentUrl(sourceUrl);
+    setShowAddModal(true);
+    router.setParams({ sourceUrl: undefined });
+  }, [params.sourceUrl, router]);
+
   useEffect(() => {
     const fileUri = Array.isArray(params.torrentFileUri)
       ? params.torrentFileUri[0]
@@ -481,6 +508,9 @@ export default function TorrentsScreen() {
           break;
         case 'ratio':
           comparison = (a.ratio ?? 0) - (b.ratio ?? 0);
+          break;
+        case 'priority':
+          comparison = a.priority - b.priority;
           break;
         case 'added_on':
           comparison = a.added_on - b.added_on;
@@ -685,20 +715,25 @@ export default function TorrentsScreen() {
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [connectErrors, setConnectErrors] = useState<Record<string, string>>({});
 
-  useEffect(() => {
-    if (!isConnected) {
-      setServersLoaded(false);
-      ServerManager.getServers()
-        .then((s) => {
-          setSavedServers(s);
-          setServersLoaded(true);
-        })
-        .catch(() => {
-          setSavedServers([]);
-          setServersLoaded(true);
-        });
-    }
-  }, [isConnected]);
+  // Refetch on every focus (not just isConnected changes) so an icon/color
+  // edited in Settings while still disconnected shows up when this screen
+  // regains focus, instead of only refreshing on the next connect/disconnect.
+  useFocusEffect(
+    useCallback(() => {
+      if (!isConnected) {
+        setServersLoaded(false);
+        ServerManager.getServers()
+          .then((s) => {
+            setSavedServers(s);
+            setServersLoaded(true);
+          })
+          .catch(() => {
+            setSavedServers([]);
+            setServersLoaded(true);
+          });
+      }
+    }, [isConnected]),
+  );
 
   const handleQuickConnect = useCallback(
     async (server: ServerConfig) => {
@@ -1066,6 +1101,7 @@ export default function TorrentsScreen() {
     { key: 'size' as const, labelKey: 'sort.size', icon: 'albums-outline' as const },
     { key: 'progress' as const, labelKey: 'sort.progress', icon: 'stats-chart-outline' as const },
     { key: 'ratio' as const, labelKey: 'sort.ulRatio', icon: 'swap-horizontal-outline' as const },
+    { key: 'priority' as const, labelKey: 'sort.priority', icon: 'list-outline' as const },
     { key: 'dlspeed' as const, labelKey: 'sort.dlSpeed', icon: 'arrow-down-outline' as const },
     { key: 'upspeed' as const, labelKey: 'sort.ulSpeed', icon: 'arrow-up-outline' as const },
   ];
@@ -1092,9 +1128,17 @@ export default function TorrentsScreen() {
   // data fetch), during background recovery, or while a fresh error is still
   // within its grace window — most poll failures self-heal within a couple
   // of seconds and shouldn't flash a hard error.
+  //
+  // Skip this entirely while the compact Add Torrent modal is open (#220):
+  // opening a magnet link foregrounds the app, which flips
+  // isRecoveringFromBackground true on the exact same tick the magnet
+  // handler is opening this modal. Returning the skeleton here unmounts the
+  // Modal along with the rest of the screen, so the dialogue flashes and is
+  // immediately dismissed. The modal already re-syncs on its own once
+  // submitted, so there's no correctness reason to interrupt it.
   if (
     (!initialLoadComplete && (serverIsLoading || !isConnected || isLoading)) ||
-    (initialLoadComplete && (isRecoveringFromBackground || isPendingError))
+    (initialLoadComplete && !showAddModal && (isRecoveringFromBackground || isPendingError))
   ) {
     return (
       <>

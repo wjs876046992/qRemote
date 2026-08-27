@@ -115,7 +115,8 @@
       "ratioLimit": "Лимит коэффициента раздачи",
       "seedingTimeLimit": "Лимит времени раздачи",
       "cookie": "Cookie",
-      "cookiePlaceholder": "Значение заголовка Cookie (необязательно)"
+      "cookiePlaceholder": "Значение заголовка Cookie (необязательно)",
+      "fromSearch": "Из поиска"
     },
     "settings": {
       "title": "Настройки",
@@ -379,7 +380,9 @@
         "category": "Категория",
         "progress": "Прогресс %",
         "addedTime": "Время"
-      }
+      },
+      "searchAddOpensDialogue": "+ в поиске открывает диалог",
+      "searchAddOpensDialogueHint": "Нажатие + на результате поиска открывает диалог добавления торрента вместо немедленного добавления."
     },
     "transfer": {
       "title": "Передача",
@@ -485,6 +488,8 @@
     },
     "trackers": {
       "title": "Трекеры",
+      "seeds": "Сиды",
+      "leeches": "Личи",
       "newTrackerUrl": "URL нового трекера",
       "editTrackerUrl": "Изменить URL трекера",
       "addNewTracker": "Добавить трекер",
@@ -545,7 +550,15 @@
       "openSite": "Open site",
       "copyLink": "Copy link",
       "shareLink": "Share link",
-      "linkCopied": "Link copied"
+      "linkCopied": "Link copied",
+      "addToCart": "Добавить в очередь",
+      "removeFromCart": "Удалить из очереди",
+      "addNow": "Добавить сейчас со значениями по умолчанию",
+      "cartTitle": "Очередь добавления",
+      "cartEmpty": "В очереди пока ничего нет",
+      "cartClearAll": "Очистить всё",
+      "cartCheckout": "Продолжить ({{count}})",
+      "cartAccessibility": "Очередь добавления, {{count}} торрент(ов)"
     },
     "rss": {
       "feedsTitle": "RSS-ленты",
@@ -649,13 +662,17 @@
     "enterKbs": "КиБ/с",
     "fallbackHost": "Резервный хост или IP",
     "proxyUsername": "Имя пользователя прокси",
-    "proxyPassword": "Пароль прокси"
+    "proxyPassword": "Пароль прокси",
+    "headerName": "Имя заголовка",
+    "headerValue": "Значение заголовка"
   },
   "actions": {
     "resume": "Запустить",
     "pause": "Пауза",
     "torrentMenu": "Действия с торрентом",
     "forceStart": "Принудительный старт",
+    "increasePriority": "Повысить приоритет",
+    "decreasePriority": "Понизить приоритет",
     "maxPriority": "Макс. приоритет",
     "minPriority": "Мин. приоритет",
     "setDlLimit": "Лимит загрузки",
@@ -741,6 +758,11 @@
     "hostAddress": "Адрес хоста",
     "port": "Порт",
     "gotIt": "Понятно",
+    "appearance": "ВНЕШНИЙ ВИД",
+    "icon": "Значок",
+    "badgeColor": "Цвет значка",
+    "chooseIcon": "Выбрать значок",
+    "customColor": "Свой цвет",
     "fallbackUrl": "РЕЗЕРВНЫЙ URL",
     "useFallback": "Использовать резервный URL",
     "useFallbackHint": "Пробовать его, если основной недоступен",
@@ -755,13 +777,21 @@
     "useBasicAuth": "Basic Auth (Прокси)",
     "useBasicAuthHint": "Требуется, если сервер защищён прокси с паролем",
     "apiKeyProxyConflict": "Basic Auth прокси нельзя использовать вместе с API-ключом — оба используют заголовок Authorization",
+    "customHeaders": "ПОЛЬЗОВАТЕЛЬСКИЕ ЗАГОЛОВКИ",
+    "useCustomHeaders": "Пользовательские HTTP-заголовки",
+    "useCustomHeadersHint": "Отправляет дополнительные заголовки с каждым запросом — для туннелей или прокси с собственной аутентификацией по заголовку (например, Pangolin)",
+    "addHeader": "Добавить заголовок",
+    "removeHeader": "Удалить заголовок",
     "debugFullUrl": "Полный URL",
     "debugProtocol": "Протокол",
     "debugHost": "Хост",
     "debugPort": "Порт",
     "debugLoginApi": "API входа",
     "debugEmpty": "(пусто)",
-    "debugDefaultPort": "по умолчанию (80/443)"
+    "debugDefaultPort": "по умолчанию (80/443)",
+    "debugCustomHeaders": "Пользовательские заголовки",
+    "debugCustomHeadersValue": "{{names}} (значения скрыты)",
+    "debugCustomHeadersNone": "Нет"
   },
   "torrentDetail": {
     "notFound": "Торрент не найден",
@@ -991,6 +1021,7 @@
     "size": "Размер",
     "progress": "Прогресс",
     "ulRatio": "Коэфф. отдачи",
+    "priority": "Приоритет",
     "dlSpeed": "Скорость загрузки",
     "ulSpeed": "Скорость отдачи"
   },
@@ -1010,6 +1041,8 @@
     "pathCopied": "Путь скопирован в буфер обмена",
     "noMagnetAvailable": "Magnet-ссылка недоступна",
     "prioritySetMax": "Приоритет: максимум",
+    "priorityIncreased": "Приоритет повышен",
+    "priorityDecreased": "Приоритет понижен",
     "downloadLimitSet": "Лимит загрузки: {{value}}",
     "uploadLimitSet": "Лимит отдачи: {{value}}",
     "dlLimitSetKb": "Лимит загрузки: {{value}} КиБ/с",
@@ -1077,6 +1110,8 @@
     "fillNameAndHost": "Укажите имя сервера и хост",
     "fillUsernamePassword": "Укажите имя пользователя и пароль",
     "fillBasicAuthUsername": "Укажите имя пользователя прокси для Basic Auth",
+    "fillCustomHeaderFields": "Укажите имя и значение для каждого пользовательского заголовка либо удалите пустой",
+    "reservedHeaderName": "«{{name}}» управляется qRemote и не может использоваться как пользовательский заголовок",
     "fillApiKey": "Введите API-ключ",
     "validPort": "Укажите порт от 1 до 65535",
     "fillFallbackHost": "Введите резервный хост",

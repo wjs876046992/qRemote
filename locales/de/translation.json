@@ -94,7 +94,8 @@
       "ratioLimit": "Verhältnis-Limit",
       "seedingTimeLimit": "Seed-Zeit-Limit",
       "cookie": "Cookie",
-      "cookiePlaceholder": "Optionaler Cookie-Header-Wert"
+      "cookiePlaceholder": "Optionaler Cookie-Header-Wert",
+      "fromSearch": "Aus der Suche"
     },
     "settings": {
       "title": "Einstellungen",
@@ -358,7 +359,9 @@
         "category": "Kategorie",
         "progress": "Fortschritt %",
         "addedTime": "Uhrzeit"
-      }
+      },
+      "searchAddOpensDialogue": "+ in der Suche öffnet den Dialog",
+      "searchAddOpensDialogueHint": "Ein Tippen auf + bei einem Suchergebnis öffnet den Torrent-Hinzufügen-Dialog, statt sofort hinzuzufügen."
     },
     "transfer": {
       "title": "Übertragung",
@@ -464,6 +467,8 @@
     },
     "trackers": {
       "title": "Manage Trackers",
+      "seeds": "Seeds",
+      "leeches": "Leechers",
       "newTrackerUrl": "New Tracker URL",
       "editTrackerUrl": "Tracker-URL bearbeiten",
       "addNewTracker": "Add New Tracker",
@@ -524,7 +529,15 @@
       "openSite": "Open site",
       "copyLink": "Copy link",
       "shareLink": "Share link",
-      "linkCopied": "Link copied"
+      "linkCopied": "Link copied",
+      "addToCart": "Zur Warteschlange hinzufügen",
+      "removeFromCart": "Aus der Warteschlange entfernen",
+      "addNow": "Jetzt mit Standardwerten hinzufügen",
+      "cartTitle": "Warteschlange",
+      "cartEmpty": "Noch nichts in der Warteschlange",
+      "cartClearAll": "Alle entfernen",
+      "cartCheckout": "Weiter ({{count}})",
+      "cartAccessibility": "Warteschlange, {{count}} Torrent(s)"
     },
     "rss": {
       "feedsTitle": "RSS-Feeds",
@@ -628,13 +641,17 @@
     "enterKbs": "KiB/s eingeben",
     "fallbackHost": "Fallback-Host oder IP",
     "proxyUsername": "Proxy-Benutzername",
-    "proxyPassword": "Proxy-Passwort"
+    "proxyPassword": "Proxy-Passwort",
+    "headerName": "Header-Name",
+    "headerValue": "Header-Wert"
   },
   "actions": {
     "resume": "Fortsetzen",
     "pause": "Pausieren",
     "torrentMenu": "Torrent-Aktionen",
     "forceStart": "Erzwungener Start",
+    "increasePriority": "Priorität erhöhen",
+    "decreasePriority": "Priorität verringern",
     "maxPriority": "Max. Priorität",
     "minPriority": "Min. Priorität",
     "setDlLimit": "DL-Limit setzen",
@@ -720,6 +737,11 @@
     "hostAddress": "Host-Adresse",
     "port": "Port",
     "gotIt": "Verstanden",
+    "appearance": "DARSTELLUNG",
+    "icon": "Symbol",
+    "badgeColor": "Abzeichenfarbe",
+    "chooseIcon": "Symbol wählen",
+    "customColor": "Eigene Farbe",
     "fallbackUrl": "FALLBACK-URL",
     "useFallback": "Fallback-URL verwenden",
     "useFallbackHint": "Diese URL versuchen, wenn die primäre fehlschlägt",
@@ -734,13 +756,21 @@
     "useBasicAuth": "Basisauthentifizierung (Proxy)",
     "useBasicAuthHint": "Erforderlich, wenn ein passwortgeschützter Proxy den Server schützt",
     "apiKeyProxyConflict": "Proxy-Basisauthentifizierung kann nicht mit einem API-Schlüssel kombiniert werden — beide nutzen den Authorization-Header",
+    "customHeaders": "BENUTZERDEFINIERTE HEADER",
+    "useCustomHeaders": "Benutzerdefinierte HTTP-Header",
+    "useCustomHeadersHint": "Sendet bei jeder Anfrage zusätzliche Header — für Tunnel oder Proxys mit eigener headerbasierter Authentifizierung (z. B. Pangolin)",
+    "addHeader": "Header hinzufügen",
+    "removeHeader": "Header entfernen",
     "debugFullUrl": "Vollständige URL",
     "debugProtocol": "Protokoll",
     "debugHost": "Host",
     "debugPort": "Port",
     "debugLoginApi": "Login-API",
     "debugEmpty": "(leer)",
-    "debugDefaultPort": "Standard (80/443)"
+    "debugDefaultPort": "Standard (80/443)",
+    "debugCustomHeaders": "Benutzerdefinierte Header",
+    "debugCustomHeadersValue": "{{names}} (Werte ausgeblendet)",
+    "debugCustomHeadersNone": "Keine"
   },
   "torrentDetail": {
     "notFound": "Torrent nicht gefunden",
@@ -970,6 +1000,7 @@
     "size": "Größe",
     "progress": "Fortschritt",
     "ulRatio": "UL-Verhältnis",
+    "priority": "Priorität",
     "dlSpeed": "DL-Geschw.",
     "ulSpeed": "UL-Geschw."
   },
@@ -989,6 +1020,8 @@
     "pathCopied": "Pfad in die Zwischenablage kopiert",
     "noMagnetAvailable": "Kein Magnet-Link verfügbar",
     "prioritySetMax": "Priorität auf Maximum gesetzt",
+    "priorityIncreased": "Priorität erhöht",
+    "priorityDecreased": "Priorität verringert",
     "downloadLimitSet": "Download-Limit auf {{value}} gesetzt",
     "uploadLimitSet": "Upload-Limit auf {{value}} gesetzt",
     "speedLimitToggled": "Geschwindigkeitslimit {{status}}",
@@ -1056,6 +1089,8 @@
     "fillNameAndHost": "Bitte Server-Name und Host ausfüllen",
     "fillUsernamePassword": "Bitte Benutzername und Passwort eingeben",
     "fillBasicAuthUsername": "Bitte Proxy-Benutzername für Basic Auth eingeben",
+    "fillCustomHeaderFields": "Bitte Name und Wert für jeden benutzerdefinierten Header ausfüllen oder den leeren entfernen",
+    "reservedHeaderName": "„{{name}}“ wird von qRemote verwaltet und kann nicht als benutzerdefinierter Header verwendet werden",
     "fillApiKey": "Bitte einen API-Schlüssel eingeben",
     "validPort": "Bitte gültige Portnummer eingeben (1-65535)",
     "fillFallbackHost": "Bitte einen Fallback-Host angeben",

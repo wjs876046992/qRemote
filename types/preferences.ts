@@ -1,6 +1,14 @@
 import { ColorTheme } from '@/services/color-theme-manager';
 
-export type SortField = 'name' | 'size' | 'progress' | 'dlspeed' | 'upspeed' | 'ratio' | 'added_on';
+export type SortField =
+  | 'name'
+  | 'size'
+  | 'progress'
+  | 'dlspeed'
+  | 'upspeed'
+  | 'ratio'
+  | 'priority'
+  | 'added_on';
 
 export type ExpandedCardField =
   | 'dlSpeed'
@@ -137,6 +145,12 @@ export interface AppPreferences {
   /** When enabled, the add-torrent button opens the full add-torrent screen */
   useFullAddTorrentDialogue: boolean;
 
+  /**
+   * When enabled, the + on a Search result opens the add-torrent dialogue
+   * pre-filled instead of instantly adding with server defaults (#217).
+   */
+  searchAddOpensDialogue: boolean;
+
   /** Per-field visibility for the full add-torrent screen */
   addTorrentDialogueFields: Record<AddTorrentDialogField, boolean>;
 
@@ -190,6 +204,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   hasCompletedOnboarding: false,
   autoCategorizeByTracker: false,
   useFullAddTorrentDialogue: false,
+  searchAddOpensDialogue: true,
   addTorrentDialogueFields: {
     source: true,
     savePath: true,

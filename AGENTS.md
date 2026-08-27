@@ -276,6 +276,11 @@ per-server secret must follow:
 - `services/api/client.ts` reads it back off the in-memory `ServerConfig` to
   build the header via `utils/basicAuth.ts`.
 
+Custom headers (`useCustomHeaders`, #228) follow the same rule: the flag is
+plain, but the whole `customHeaders` array is a secret (values are tokens),
+JSON-stringified into `server_custom_headers_{id}` and forced to `[]` in
+AsyncStorage.
+
 Be deliberate whenever you touch code that persists a `ServerConfig` — including
 paths that rewrite the *whole* server list, such as add, edit, delete, and
 import. A secret must never reach AsyncStorage, and bulk rewrites are the easiest
@@ -346,6 +351,11 @@ nested under `advanced`, not on the hub.
 - **`ThemeContext.tsx`** — `useTheme()`, the `colors` object, user overrides.
 - **`ApiVersionContext.tsx`** — detected qBittorrent API version → feature gating
   through `utils/apiVersion.ts`.
+- **`SearchCartContext.tsx`** — session-scoped queue of Search results the user
+  wants to add together (#217). Not persisted — plugin download URLs are often
+  session/token-bound. Dedupes by `fileUrl`. Consumed by `app/torrents/add.tsx`
+  (gated on the `fromCart` route param) and grouped for submission via
+  `utils/search-cart.ts`.
 
 ### Components (`components/`)
 
@@ -354,17 +364,29 @@ All PascalCase function components taking a `…Props` interface.
 - **Modals / pickers** — `ActionMenu` (anchored popover), `ConfirmModal` (themed
   confirm), `InputModal` (themed text input; optional `pathAutocomplete` prop),
   `OptionPicker`, `MultiSelectPicker`, `CategoryModal`, `TagsModal`, `ColorPicker`,
-  `PathAutocompleteInput` (live directory suggestions via `app/getDirectoryContent`,
-  qBit 5.0+ / WebAPI ≥ 2.11 — silent no-op when unsupported; also renders the
-  browse button), `SavePathPickerModal` (filterable list of save paths already in
-  use, derived from TorrentContext via `utils/save-paths.ts` — works on any
-  qBittorrent version).
+  `IconPicker` (grid picker for a server's badge icon, previewed in its badge
+  color — see `constants/serverIcons.ts`), `PathAutocompleteInput` (live
+  directory suggestions via `app/getDirectoryContent`, qBit 5.0+ / WebAPI ≥
+  2.11 — silent no-op when unsupported; also renders the browse button),
+  `SavePathPickerModal` (filterable list of save paths already in use, derived
+  from TorrentContext via `utils/save-paths.ts` — works on any qBittorrent
+  version), `SearchCartModal` (review sheet for the Search tab's add queue —
+  list, per-item remove, Clear all, Checkout — see `SearchCartContext.tsx`).
 - **Torrent / search UI** — `TorrentCard` (`React.memo` with a **custom
   comparator — keep it in sync when you add a rendered field**, or the card
   silently stops updating; category/tag stickers use `categoryColors`/`tagColors`
   then defaults then the `avatarColor` fallback), `SearchResultRow` (+ internal
-  ActionPill), `FilterChip`, `EmptyState`, `SkeletonLoader` (+ `SkeletonTorrentCard`),
-  `PieceMap`.
+  ActionPill; the `+` button and the cart-toggle button are independent — see
+  its header comment), `FilterChip`, `EmptyState`, `SkeletonLoader`
+  (+ `SkeletonTorrentCard`), `PieceMap`, `ServerIconBadge` (per-server tinted
+  icon badge — `ServerConfig.icon`/`iconColor` via `utils/server.ts`
+  `getServerIcon`/`getServerIconColor`, falling back to a default icon and
+  `avatarColor(name)`), `ServerAppearanceSection` (icon + badge-color editor
+  used by both `app/server/add.tsx` and `app/server/[id].tsx` — quick
+  `AVATAR_PALETTE` swatches plus a "custom color" swatch that opens the full
+  `ColorPicker`), `CustomHeadersSection` (per-server custom HTTP header
+  key/value rows, max 5, used by the same two screens — see
+  `utils/customHeaders.ts`).
 - **Visuals** — `SpeedGraph`, `CircularProgress`, `AnimatedProgressBar`,
   `AnimatedButton`, `Confetti`.
 - **Chrome / diagnostics** — `FocusAwareStatusBar`, `SettingRow`,
@@ -443,13 +465,21 @@ and availability **FLOOR**, never round up) · `torrent-state.ts` (state → col
 label, completion and ETA rules) · `limit-input.ts` (share-limit sentinels:
 `-2` = follow global, `-1` = unlimited; own-vs-effective limit resolution) ·
 `error.ts` (`getErrorMessage`) · `apiVersion.ts` (parse + `ApiFeatures` gating) ·
-`server.ts` (endpoint resolution incl. fallback URL, avatar colors) ·
+`server.ts` (endpoint resolution incl. fallback URL, avatar colors, and
+`getServerIcon`/`getServerIconColor` for the per-server badge — #224) ·
 `authMode.ts` (derives `password`/`apiKey`/`none`) · `basicAuth.ts` ·
+`customHeaders.ts` (per-server custom HTTP headers — sanitize/validate, and the
+reserved-name set the app manages itself: Authorization, Cookie, Referer,
+Origin, Content-Type, Host — #228) ·
 `magnet.ts` / `torrent-file.ts` (incoming link and file parsing) · `rss.ts`
 (RSS tree flattening; paths join with `\`) · `searchResult.ts` (indexer-label
 heuristics) · `login-response.ts` (qBittorrent login body/cookie interpretation) ·
 `haptics.ts` (global toggle + wrappers) · `tags.ts` (CSV tag parsing) ·
-`add-torrent-dialogue.ts` (compact vs full variant) · `server-export.ts` (strips
+`add-torrent-dialogue.ts` (compact vs full variant, plus `getSearchAddOpensDialogue`
+for the Search tab's `+` behavior — #217) · `search-cart.ts`
+(`groupCartItemsForAdd` — splits a `SearchCartContext` cart into one
+`torrents/add` batch per indexer when auto-tag-by-tracker is on, since that
+endpoint applies one `tags` value per request) · `server-export.ts` (strips
 `password`/`basicAuthPassword`/`apiKey` on export, forces them empty on import) ·
 `save-paths.ts` (`getKnownSavePaths`, derived from live data — no API call) ·
 `version.ts` (`APP_VERSION`).
@@ -461,8 +491,9 @@ heuristics) · `login-response.ts` (qBittorrent login body/cookie interpretation
 - `types/preferences.ts` — typed preferences + defaults.
 - `constants/` — `changelog.ts` (don't edit unless asked; see
   [docs/RELEASING.md](docs/RELEASING.md)),
-  `spacing.ts`, `typography.ts`, `shadows.ts`, `buttons.ts`. **Use these tokens;
-  don't invent ad-hoc spacing.**
+  `spacing.ts`, `typography.ts`, `shadows.ts`, `buttons.ts`, `serverIcons.ts`
+  (`SERVER_ICON_OPTIONS`, `DEFAULT_SERVER_ICON` — the curated Ionicons set for
+  a server's badge, #224). **Use these tokens; don't invent ad-hoc spacing.**
 - `i18n/index.ts` initializes react-i18next. Each locale is ONE file,
   `locales/{en,es,zh,fr,de,ru}/translation.json`, holding every namespace:
   `common`, `states`, `screens`, `placeholders`, `actions`, `alerts`, `server`,

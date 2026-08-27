@@ -22,6 +22,7 @@ import { useToast } from '@/context/ToastContext';
 import { FocusAwareStatusBar } from '@/components/FocusAwareStatusBar';
 import { EmptyState } from '@/components/EmptyState';
 import { ConfirmModal } from '@/components/ConfirmModal';
+import { ServerIconBadge } from '@/components/ServerIconBadge';
 import { ServerManager } from '@/services/server-manager';
 import { storageService } from '@/services/storage';
 import { ServerConfig } from '@/types/api';
@@ -143,10 +144,15 @@ function SwipeableServerItem({
           <TouchableOpacity style={styles.listItem} onPress={handlePress} activeOpacity={0.7}>
             <View style={styles.listItemContent}>
               <View style={styles.listItemLeft}>
-                <Ionicons name="server-outline" size={20} color={colors.primary} />
+                <ServerIconBadge server={server} size={36} />
                 <View style={styles.listItemText}>
-                  <Text style={[styles.listItemTitle, { color: colors.text }]}>{server.name}</Text>
-                  <Text style={[styles.listItemSubtitle, { color: colors.textSecondary }]}>
+                  <Text style={[styles.listItemTitle, { color: colors.text }]} numberOfLines={1}>
+                    {server.name}
+                  </Text>
+                  <Text
+                    style={[styles.listItemSubtitle, { color: colors.textSecondary }]}
+                    numberOfLines={1}
+                  >
                     {serverAddress}
                   </Text>
                 </View>

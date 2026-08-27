@@ -115,6 +115,83 @@ describe('storageService', () => {
       expect(raw[0].apiKey).toBe('');
     });
 
+    it('persists customHeaders separately, storing them in SecureStore', async () => {
+      await storageService.saveServer(
+        makeServer({
+          useCustomHeaders: true,
+          customHeaders: [{ key: 'X-Pangolin-Token', value: 'tok_secret' }],
+        }),
+      );
+      const servers = await storageService.getServers();
+      expect(servers[0].useCustomHeaders).toBe(true);
+      expect(servers[0].customHeaders).toEqual([{ key: 'X-Pangolin-Token', value: 'tok_secret' }]);
+      const raw = JSON.parse(mockAsyncStorage['servers']);
+      expect(raw[0].customHeaders).toEqual([]);
+      expect(mockSecureStore['server_custom_headers_s1']).toBe(
+        JSON.stringify([{ key: 'X-Pangolin-Token', value: 'tok_secret' }]),
+      );
+    });
+
+    // Backwards compatibility (#228): records written before custom headers
+    // existed have no useCustomHeaders/customHeaders keys in AsyncStorage and
+    // no server_custom_headers_{id} entry in SecureStore. There is no
+    // migration system, so these must keep loading untouched.
+    it('loads a legacy record that predates custom headers', async () => {
+      mockAsyncStorage['servers'] = JSON.stringify([
+        {
+          id: 'legacy',
+          name: 'Legacy',
+          host: 'old.example.com',
+          port: 8080,
+          basePath: '/',
+          username: 'admin',
+          password: '',
+          useHttps: false,
+          bypassAuth: false,
+        },
+      ]);
+      mockSecureStore['server_password_legacy'] = 'legacy-pass';
+
+      const servers = await storageService.getServers();
+      expect(servers).toHaveLength(1);
+      expect(servers[0].name).toBe('Legacy');
+      expect(servers[0].password).toBe('legacy-pass');
+      expect(servers[0].useCustomHeaders).toBeUndefined();
+      expect(servers[0].customHeaders).toEqual([]);
+    });
+
+    it('degrades to no custom headers when the stored secret is corrupt', async () => {
+      await storageService.saveServer(makeServer());
+      mockSecureStore['server_custom_headers_s1'] = '{not valid json';
+      const servers = await storageService.getServers();
+      expect(servers[0].customHeaders).toEqual([]);
+    });
+
+    it('drops malformed stored header entries instead of surfacing them', async () => {
+      await storageService.saveServer(makeServer());
+      mockSecureStore['server_custom_headers_s1'] =
+        '[{"key":123},{"key":"X-Ok","value":"ok"},null]';
+      const servers = await storageService.getServers();
+      expect(servers[0].customHeaders).toEqual([{ key: 'X-Ok', value: 'ok' }]);
+    });
+
+    // saveServer is the one chokepoint every write passes through, including
+    // settings import, which spreads unvalidated JSON into a ServerConfig.
+    it('sanitizes on write so a caller cannot persist a reserved or malformed header', async () => {
+      await storageService.saveServer(
+        makeServer({
+          useCustomHeaders: true,
+          customHeaders: [
+            { key: 'Authorization', value: 'Bearer attacker' },
+            { key: '  X-Token  ', value: '  secret  ' },
+            { key: '', value: 'orphaned' },
+          ],
+        }),
+      );
+      const servers = await storageService.getServers();
+      expect(servers[0].customHeaders).toEqual([{ key: 'X-Token', value: 'secret' }]);
+    });
+
     it('getServers returns [] when nothing stored', async () => {
       const servers = await storageService.getServers();
       expect(servers).toEqual([]);
@@ -167,6 +244,17 @@ describe('storageService', () => {
       expect(raw.find((s: { id: string }) => s.id === 's2').apiKey).toBe('');
       const servers = await storageService.getServers();
       expect(servers.find((s) => s.id === 's2')?.apiKey).toBe('qbt_keepme1234567890123456789012');
+    });
+
+    it('removes the customHeaders secret on delete', async () => {
+      await storageService.saveServer(
+        makeServer({
+          useCustomHeaders: true,
+          customHeaders: [{ key: 'X-Token', value: 'secret' }],
+        }),
+      );
+      await storageService.deleteServer('s1');
+      expect(mockSecureStore['server_custom_headers_s1']).toBeUndefined();
     });
 
     it('clears currentServerId when deleting the current server', async () => {

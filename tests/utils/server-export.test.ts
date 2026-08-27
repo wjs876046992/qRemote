@@ -28,6 +28,8 @@ function makeServer(overrides: Partial<ServerConfig> = {}): ServerConfig {
     basicAuthPassword: 'proxy-secret',
     useApiKey: false,
     apiKey: 'key-secret',
+    useCustomHeaders: true,
+    customHeaders: [{ key: 'X-Pangolin-Token', value: 'header-secret' }],
     ...overrides,
   };
 }
@@ -38,6 +40,23 @@ describe('toExportedServer', () => {
     expect(exported.password).toBe('');
     expect(exported.basicAuthPassword).toBe('');
     expect(exported.apiKey).toBe('');
+    expect(exported.customHeaders).toEqual([]);
+  });
+
+  it('keeps the useCustomHeaders flag, which is not a secret', () => {
+    const exported = toExportedServer(makeServer());
+    expect(exported.useCustomHeaders).toBe(true);
+  });
+
+  // Backwards compatibility (#228): configs and export files written before
+  // custom headers existed carry neither field.
+  it('handles a legacy config with no custom-header fields', () => {
+    const legacy = makeServer();
+    delete legacy.useCustomHeaders;
+    delete legacy.customHeaders;
+    const exported = toExportedServer(legacy);
+    expect(exported.useCustomHeaders).toBe(false);
+    expect(exported.customHeaders).toEqual([]);
   });
 
   it('keeps connection settings, auth flags, and usernames', () => {
@@ -66,6 +85,12 @@ describe('toExportedServer', () => {
     expect(exported.port).toBeUndefined();
     expect(exported.fallbackPort).toBeUndefined();
   });
+
+  it('keeps icon customization (#224), which is not a secret', () => {
+    const exported = toExportedServer(makeServer({ icon: 'home-outline', iconColor: '#123456' }));
+    expect(exported.icon).toBe('home-outline');
+    expect(exported.iconColor).toBe('#123456');
+  });
 });
 
 describe('buildServerExport', () => {
@@ -83,6 +108,7 @@ describe('buildServerExport', () => {
     expect(json).not.toContain('super-secret');
     expect(json).not.toContain('proxy-secret');
     expect(json).not.toContain('key-secret');
+    expect(json).not.toContain('header-secret');
   });
 });
 
@@ -98,6 +124,19 @@ describe('parseServerImport', () => {
     expect(servers).toHaveLength(2);
     expect(servers[0]).toMatchObject({ id: 's1', name: 'Home', host: 'nas.local' });
     expect(servers[1]).toMatchObject({ id: 's2', name: 'Remote' });
+  });
+
+  it('imports a legacy export file written before custom headers existed', () => {
+    const json = JSON.stringify({
+      kind: SERVER_EXPORT_KIND,
+      version: SERVER_EXPORT_VERSION,
+      exportedAt: '2026-07-26T00:00:00.000Z',
+      servers: [{ id: 'old', name: 'Old', host: 'old.example.com', username: 'admin' }],
+    });
+    const [server] = parseServerImport(json);
+    expect(server.name).toBe('Old');
+    expect(server.useCustomHeaders).toBe(false);
+    expect(server.customHeaders).toEqual([]);
   });
 
   it('rejects non-JSON text', () => {
@@ -148,6 +187,7 @@ describe('parseServerImport', () => {
           password: 'injected',
           basicAuthPassword: 'injected',
           apiKey: 'injected',
+          customHeaders: [{ key: 'X-Injected', value: 'injected' }],
         },
       ],
     });
@@ -155,5 +195,6 @@ describe('parseServerImport', () => {
     expect(server.password).toBe('');
     expect(server.basicAuthPassword).toBe('');
     expect(server.apiKey).toBe('');
+    expect(server.customHeaders).toEqual([]);
   });
 });

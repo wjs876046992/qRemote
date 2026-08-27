@@ -33,12 +33,19 @@ import { SuperDebugPanel } from '@/components/SuperDebugPanel';
 import { DebugRow } from '@/components/DebugRow';
 import { SettingRow } from '@/components/SettingRow';
 import { OptionPicker, OptionPickerItem } from '@/components/OptionPicker';
+import { ServerAppearanceSection } from '@/components/ServerAppearanceSection';
+import { CustomHeadersSection } from '@/components/CustomHeadersSection';
 import { spacing, borderRadius } from '@/constants/spacing';
 import { shadows } from '@/constants/shadows';
 import * as Clipboard from 'expo-clipboard';
 import { APP_VERSION } from '@/utils/version';
 import { getErrorMessage } from '@/utils/error';
 import { ServerAuthMode, getServerAuthMode, applyServerAuthMode } from '@/utils/authMode';
+import {
+  CustomHeaderPair,
+  sanitizeCustomHeaders,
+  validateCustomHeaders,
+} from '@/utils/customHeaders';
 
 export default function EditServerScreen() {
   const router = useRouter();
@@ -50,6 +57,8 @@ export default function EditServerScreen() {
   const [name, setName] = useState('');
   const [host, setHost] = useState('');
   const [port, setPort] = useState('');
+  const [icon, setIcon] = useState('');
+  const [iconColor, setIconColor] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [authMode, setAuthMode] = useState<ServerAuthMode>('password');
@@ -60,6 +69,8 @@ export default function EditServerScreen() {
   const [useBasicAuth, setUseBasicAuth] = useState(false);
   const [basicAuthUsername, setBasicAuthUsername] = useState('');
   const [basicAuthPassword, setBasicAuthPassword] = useState('');
+  const [useCustomHeaders, setUseCustomHeaders] = useState(false);
+  const [customHeaders, setCustomHeaders] = useState<CustomHeaderPair[]>([]);
   const [useFallback, setUseFallback] = useState(false);
   const [fallbackHost, setFallbackHost] = useState('');
   const [fallbackPort, setFallbackPort] = useState('');
@@ -181,11 +192,16 @@ export default function EditServerScreen() {
       baseUrl,
       loginEndpoint: `${baseUrl}/api/v2/auth/login`,
       versionEndpoint: `${baseUrl}/api/v2/app/version`,
+      // Names only — this whole block is copied to the clipboard and routinely
+      // pasted into public issue reports, and header values are auth tokens.
+      customHeaderNames: useCustomHeaders
+        ? sanitizeCustomHeaders(customHeaders).map((header) => header.key)
+        : [],
       warnings,
       hasErrors: warnings.some((w) => w.type === 'error'),
       hasWarnings: warnings.some((w) => w.type === 'warning'),
     };
-  }, [host, port, useHttps, authMode, username, password, apiKey]);
+  }, [host, port, useHttps, authMode, username, password, apiKey, useCustomHeaders, customHeaders]);
 
   // Copy debug info to clipboard
   const copyDebugInfo = async () => {
@@ -196,6 +212,7 @@ Host: ${debugInfo.cleanHost || '(empty)'}
 Port: ${debugInfo.portNum || 'default (80/443)'}
 HTTPS: ${useHttps ? 'Yes' : 'No'}
 Auth Method: ${authMode}
+Custom Headers: ${debugInfo.customHeaderNames.length > 0 ? debugInfo.customHeaderNames.join(', ') + ' (values hidden)' : 'None'}
 
 Login Endpoint: ${debugInfo.loginEndpoint}
 Version Endpoint: ${debugInfo.versionEndpoint}
@@ -237,6 +254,10 @@ App Version: ${APP_VERSION}`;
         setUseBasicAuth(server.useBasicAuth || false);
         setBasicAuthUsername(server.basicAuthUsername || '');
         setBasicAuthPassword(server.basicAuthPassword || '');
+        setUseCustomHeaders(server.useCustomHeaders || false);
+        setCustomHeaders(server.customHeaders || []);
+        setIcon(server.icon || '');
+        setIconColor(server.iconColor || '');
         // Preserve existing basePath for backward compatibility
         setPreservedBasePath(server.basePath || '/');
         // Round-trip fallback fields
@@ -285,6 +306,21 @@ App Version: ${APP_VERSION}`;
       return;
     }
 
+    if (useCustomHeaders) {
+      const headerValidation = validateCustomHeaders(customHeaders);
+      if (!headerValidation.valid) {
+        if (headerValidation.error === 'reserved') {
+          showToast(
+            t('errors.reservedHeaderName', { name: headerValidation.reservedName }),
+            'error',
+          );
+        } else {
+          showToast(t('errors.fillCustomHeaderFields'), 'error');
+        }
+        return;
+      }
+    }
+
     const portNum = port.trim() ? parseInt(port, 10) : undefined;
     if (portNum !== undefined && (isNaN(portNum) || portNum < 1 || portNum > 65535)) {
       showToast(t('errors.validPort'), 'error');
@@ -327,11 +363,15 @@ App Version: ${APP_VERSION}`;
         useBasicAuth: useProxyBasicAuth,
         basicAuthUsername: useProxyBasicAuth ? basicAuthUsername.trim() : '',
         basicAuthPassword: useProxyBasicAuth ? basicAuthPassword : '',
+        useCustomHeaders,
+        customHeaders: useCustomHeaders ? sanitizeCustomHeaders(customHeaders) : [],
         useFallback,
         fallbackHost: useFallback ? stripProtocol(fallbackHost.trim()) : '',
         fallbackPort: useFallback ? fallbackPortNum : undefined,
         fallbackUseHttps: useFallback ? fallbackUseHttps : false,
         fallbackBasePath: preservedFallbackBasePath, // Preserve existing fallback base path
+        icon: icon || undefined,
+        iconColor: iconColor || undefined,
       };
 
       await ServerManager.saveServer(server);
@@ -394,6 +434,21 @@ App Version: ${APP_VERSION}`;
       return;
     }
 
+    if (useCustomHeaders) {
+      const headerValidation = validateCustomHeaders(customHeaders);
+      if (!headerValidation.valid) {
+        if (headerValidation.error === 'reserved') {
+          showToast(
+            t('errors.reservedHeaderName', { name: headerValidation.reservedName }),
+            'error',
+          );
+        } else {
+          showToast(t('errors.fillCustomHeaderFields'), 'error');
+        }
+        return;
+      }
+    }
+
     const portNum = port.trim() ? parseInt(port, 10) : undefined;
     if (portNum !== undefined && (isNaN(portNum) || portNum < 1 || portNum > 65535)) {
       showToast(t('errors.validPort'), 'error');
@@ -435,6 +490,8 @@ App Version: ${APP_VERSION}`;
         useBasicAuth: useProxyBasicAuth,
         basicAuthUsername: useProxyBasicAuth ? basicAuthUsername.trim() : '',
         basicAuthPassword: useProxyBasicAuth ? basicAuthPassword : '',
+        useCustomHeaders,
+        customHeaders: useCustomHeaders ? sanitizeCustomHeaders(customHeaders) : [],
         useFallback,
         fallbackHost: useFallback ? stripProtocol(fallbackHost.trim()) : '',
         fallbackPort: useFallback ? fallbackPortNum : undefined,
@@ -614,6 +671,14 @@ App Version: ${APP_VERSION}`;
             </View>
           </View>
 
+          <ServerAppearanceSection
+            name={name}
+            icon={icon}
+            iconColor={iconColor}
+            onIconChange={setIcon}
+            onIconColorChange={setIconColor}
+          />
+
           {/* Fallback URL Section */}
           <View style={styles.section}>
             <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
@@ -696,6 +761,8 @@ App Version: ${APP_VERSION}`;
                     <Text
                       style={[styles.authMethodValueText, { color: colors.textSecondary }]}
                       numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.75}
                     >
                       {authMethodLabel}
                     </Text>
@@ -918,6 +985,13 @@ App Version: ${APP_VERSION}`;
             </View>
           </View>
 
+          <CustomHeadersSection
+            useCustomHeaders={useCustomHeaders}
+            headers={customHeaders}
+            onUseCustomHeadersChange={setUseCustomHeaders}
+            onHeadersChange={setCustomHeaders}
+          />
+
           {/* Test Connection */}
           <View style={styles.section}>
             <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
@@ -1001,6 +1075,17 @@ App Version: ${APP_VERSION}`;
                     debugInfo.portNum ? String(debugInfo.portNum) : t('server.debugDefaultPort')
                   }
                 />
+                <DebugRow
+                  label={t('server.debugCustomHeaders')}
+                  value={
+                    debugInfo.customHeaderNames.length > 0
+                      ? t('server.debugCustomHeadersValue', {
+                          names: debugInfo.customHeaderNames.join(', '),
+                        })
+                      : t('server.debugCustomHeadersNone')
+                  }
+                  numberOfLines={2}
+                />
 
                 <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
 
@@ -1082,6 +1167,8 @@ App Version: ${APP_VERSION}`;
                 useBasicAuth={authMode !== 'apiKey' && useBasicAuth}
                 basicAuthUsername={basicAuthUsername}
                 basicAuthPassword={basicAuthPassword}
+                useCustomHeaders={useCustomHeaders}
+                customHeaders={customHeaders}
               />
             </View>
           )}
@@ -1346,10 +1433,20 @@ const styles = StyleSheet.create({
   authMethodValue: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'flex-end',
     gap: 4,
+    // SettingRow's label side is flex:1, so it only gets what's left over after
+    // this value is laid out at its intrinsic width. Unbounded, a long value
+    // ("Username & Password") starved the label until "Authentication Method"
+    // broke mid-word. Capping the value reserves enough room for the label to
+    // wrap on a word boundary; the value scales its font down to compensate.
+    maxWidth: '45%',
+    flexShrink: 1,
   },
   authMethodValueText: {
     fontSize: 16,
+    flexShrink: 1,
+    textAlign: 'right',
   },
   hintText: {
     fontSize: 12,

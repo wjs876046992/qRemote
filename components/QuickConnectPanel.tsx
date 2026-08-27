@@ -11,7 +11,8 @@ import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
 import { ServerConfig } from '@/types/api';
 import { useTheme } from '@/context/ThemeContext';
-import { avatarColor, serverAddress } from '@/utils/server';
+import { getServerIconColor, serverAddress } from '@/utils/server';
+import { ServerIconBadge } from '@/components/ServerIconBadge';
 import { FocusAwareStatusBar } from '@/components/FocusAwareStatusBar';
 import { shadows } from '@/constants/shadows';
 import { spacing, borderRadius } from '@/constants/spacing';
@@ -89,7 +90,7 @@ export function QuickConnectPanel({
           </Text>
           <View style={[styles.card, { backgroundColor: colors.surface }]}>
             {savedServers.map((server, index) => {
-              const color = avatarColor(server.name);
+              const color = getServerIconColor(server);
               const addr = serverAddress(server);
               const isConnectingThis = connectingId === server.id;
               const errMsg = connectErrors[server.id];
@@ -102,16 +103,7 @@ export function QuickConnectPanel({
                     activeOpacity={0.7}
                     disabled={connectingId !== null}
                   >
-                    <View
-                      style={[
-                        styles.serverAvatar,
-                        { backgroundColor: color + '22', borderColor: color + '44' },
-                      ]}
-                    >
-                      <Text style={[styles.serverAvatarLetter, { color }]}>
-                        {server.name.charAt(0).toUpperCase()}
-                      </Text>
-                    </View>
+                    <ServerIconBadge server={server} size={44} />
                     <View style={styles.serverInfo}>
                       <Text style={[styles.serverName, { color: colors.text }]} numberOfLines={1}>
                         {server.name}
@@ -263,19 +255,6 @@ const styles = StyleSheet.create({
   divider: {
     height: 0.5,
     marginLeft: 68,
-  },
-  serverAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: borderRadius.medium,
-    borderWidth: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    flexShrink: 0,
-  },
-  serverAvatarLetter: {
-    fontSize: 18,
-    fontWeight: '700',
   },
   serverInfo: {
     flex: 1,
