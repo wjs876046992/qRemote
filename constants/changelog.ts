@@ -19,6 +19,81 @@ export interface ChangelogRelease {
 }
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    version: '3.8.44',
+    date: '2026-09-09',
+    sections: [
+      {
+        title: 'Bugs Fixed',
+        items: [
+          'Fixed turning off "Create root folder" in the add torrent dialog having no effect',
+          'Fixed losing the login session behind some reverse proxies that set their own cookies',
+          'Fixed the connection timeout and retry settings being ignored on the first connect after launch',
+          'Fixed the retry attempts setting resetting to 3 when set to 0',
+          'Fixed a loading screen flashing every time the app was reopened after a quick switch to another app',
+        ],
+      },
+      {
+        title: 'Maintenance',
+        items: ['Connecting to a server is slightly faster'],
+      },
+    ],
+  },
+  {
+    version: '3.8.43',
+    date: '2026-09-07',
+    sections: [
+      {
+        title: 'Bugs Fixed',
+        items: [
+          'Fixed the torrent list and torrent detail screen showing old data instead of a loading state while reconnecting after a long time in the background',
+          'Fixed an authentication error appearing when opening a torrent before the app finished reconnecting',
+        ],
+      },
+    ],
+  },
+  {
+    version: '3.8.42',
+    date: '2026-09-06',
+    sections: [
+      {
+        title: 'Bugs Fixed',
+        items: [
+          'Fixed swipe actions not lining up with the torrent card',
+          'Fixed the delete icon not appearing until a row is swiped most of the way',
+          'Fixed the Connect button being unreadable after a connection error',
+          'Fixed the torrent list briefly showing "No Torrents" while still connecting',
+          'Fixed an authentication error when switching between servers',
+          "Fixed a server's badge color changing on every keystroke while typing its name",
+          'Feature flagged sound effects',
+        ],
+      },
+    ],
+  },
+  {
+    version: '3.8.41',
+    date: '2026-08-30',
+    sections: [
+      {
+        title: 'New Features',
+        items: [
+          'The disconnected screen now shows an animated ship instead of an icon',
+          'Added optional sound effects for torrent actions, customizable per action in Settings',
+          'Torrent detail now shows DHT, PeX, LSD, encryption, and private-torrent status',
+          'Transfer tab now shows the server’s external IP and how long you’ve been connected',
+          'Added a Connection settings screen for listening port, connection limits, proxy server, IP filtering, and I2P',
+        ],
+      },
+      {
+        title: 'Bugs Fixed',
+        items: [
+          'Fixed the tracker count on the torrent detail screen showing double the real number',
+          'Fixed the proxy server type not actually saving to the server',
+          'Fixed Email Notifications & Automation settings silently showing blank/off values instead of a "not connected" state when disconnected',
+        ],
+      },
+    ],
+  },
+  {
     version: '3.8.40',
     date: '2026-08-23',
     sections: [

@@ -2,6 +2,7 @@ import React from 'react';
 import {
   View,
   Text,
+  Image,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
@@ -12,12 +13,27 @@ import { Ionicons } from '@expo/vector-icons';
 import { ServerConfig } from '@/types/api';
 import { useTheme } from '@/context/ThemeContext';
 import { getServerIconColor, serverAddress } from '@/utils/server';
+import { withAlpha } from '@/utils/color';
 import { ServerIconBadge } from '@/components/ServerIconBadge';
 import { FocusAwareStatusBar } from '@/components/FocusAwareStatusBar';
 import { shadows } from '@/constants/shadows';
 import { spacing, borderRadius } from '@/constants/spacing';
 import { buttonStyles, buttonText } from '@/constants/buttons';
 import { typography } from '@/constants/typography';
+
+// Source art is 400x300; keep every rendered size on this ratio.
+const SHIP_ART_RATIO = 400 / 300;
+
+/** Animated ship artwork shown in place of an icon on the "not connected" states (#231). */
+function ShipArt({ width, style }: { width: number; style?: object }) {
+  return (
+    <Image
+      source={require('@/assets/media/ship.gif')}
+      style={[{ width, height: width / SHIP_ART_RATIO }, style]}
+      resizeMode="contain"
+    />
+  );
+}
 
 interface QuickConnectPanelProps {
   savedServers: ServerConfig[];
@@ -44,7 +60,7 @@ export function QuickConnectPanel({
       <>
         <FocusAwareStatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
         <View style={[styles.center, { backgroundColor: colors.background }]}>
-          <Ionicons name="navigate-outline" size={64} color={colors.textSecondary} />
+          <ShipArt width={220} />
           <Text style={[styles.emptyTitle, { color: colors.text }]}>
             {t('screens.torrents.notConnected')}
           </Text>
@@ -71,9 +87,7 @@ export function QuickConnectPanel({
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.hero}>
-          <View style={[styles.iconRing, { borderColor: colors.surfaceOutline }]}>
-            <Ionicons name="navigate-outline" size={36} color={colors.textSecondary} />
-          </View>
+          <ShipArt width={140} />
           <Text
             style={[styles.emptyTitle, { color: colors.text, marginTop: spacing.lg, fontSize: 20 }]}
           >
@@ -137,8 +151,8 @@ export function QuickConnectPanel({
                       style={[
                         styles.connectPill,
                         {
-                          backgroundColor: errMsg ? colors.error + '18' : color + '18',
-                          borderColor: errMsg ? colors.error + '40' : color + '40',
+                          backgroundColor: withAlpha(errMsg ? colors.error : color, 0.09),
+                          borderColor: withAlpha(errMsg ? colors.error : color, 0.25),
                         },
                       ]}
                     >
@@ -221,14 +235,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: 72,
     paddingBottom: spacing.xxxl,
-  },
-  iconRing: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    borderWidth: 1.5,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   serversSection: {
     marginBottom: spacing.xl,

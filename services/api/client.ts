@@ -3,7 +3,7 @@
  *
  * Key exports: apiClient (singleton ApiClient instance)
  */
-import axios, { AxiosInstance, AxiosError, AxiosHeaders } from 'axios';
+import axios, { AxiosInstance, AxiosError, AxiosHeaders, InternalAxiosRequestConfig } from 'axios';
 import { ServerConfig } from '@/types/api';
 import { clogDebug, clogInfo, clogWarn, clogError } from '@/services/connectivity-log';
 import { ApiFeatures, getApiFeatures } from '@/utils/apiVersion';
@@ -28,6 +28,9 @@ function apiError(message: string, status?: number): ApiError {
   return err;
 }
 
+/** Config augmented with the session epoch it was issued under (see ApiClient.sessionEpoch). */
+type EpochedRequestConfig = InternalAxiosRequestConfig & { __sessionEpoch?: number };
+
 class ApiClient {
   private client: AxiosInstance;
   private currentServer: ServerConfig | null = null;
@@ -35,6 +38,18 @@ class ApiClient {
   private retryAttempts: number = 3;
   private apiVersion: string | null = null;
   private cachedFeatures: ApiFeatures | null = null;
+  /**
+   * Bumped whenever the current session's cookie is invalidated (a server
+   * switch, an explicit clearCookies, or a 403). Each outgoing request is
+   * stamped with the epoch active when it was sent; a 403 response is only
+   * allowed to clear the *current* session's cookie when its request was
+   * stamped with that same epoch. Without this, a request issued against a
+   * just-superseded session (e.g. a poll for the server the app is switching
+   * away from) can land after a new session's login and wipe the fresh
+   * cookie it just received, surfacing as a spurious "Authentication failed"
+   * on the new connect.
+   */
+  private sessionEpoch: number = 0;
 
   constructor() {
     this.client = axios.create({
@@ -49,10 +64,12 @@ class ApiClient {
 
     // Request interceptor to add cookies and base URL
     this.client.interceptors.request.use(
-      (config) => {
+      (config: EpochedRequestConfig) => {
         if (!this.currentServer) {
           return Promise.reject(new Error('No server configured'));
         }
+
+        config.__sessionEpoch = this.sessionEpoch;
 
         const protocol = this.currentServer.useHttps ? 'https' : 'http';
         // Defense-in-depth: strip protocol and trailing colons/slashes from host even if already sanitized
@@ -146,27 +163,8 @@ class ApiClient {
           (typeof headers.get === 'function' ? headers.get('set-cookie') : null);
 
         if (setCookieHeader) {
-          if (Array.isArray(setCookieHeader)) {
-            // Join multiple cookies with semicolon and space
-            // Also extract CSRF token if present in cookies
-            this.cookies = setCookieHeader
-              .map((cookie) => {
-                return cookie.split(';')[0].trim();
-              })
-              .join('; ');
-          } else {
-            this.cookies = setCookieHeader.split(';')[0].trim();
-          }
+          this.mergeCookies(setCookieHeader);
           clogDebug('HTTP', `Cookies captured: ${this.cookies.substring(0, 60)}...`);
-          // console.log('Cookies captured after request:', this.cookies.substring(0, 100));
-        } else {
-          // Log available headers for debugging
-          const headerKeys = Object.keys(headers);
-          // console.log('No set-cookie header found. Available headers:', headerKeys);
-          // Check if cookies might be in a different format
-          if (headerKeys.length > 0) {
-            // console.log('Sample header values:', headerKeys.slice(0, 5).map(key => `${key}: ${String(headers[key]).substring(0, 50)}`));
-          }
         }
         return response;
       },
@@ -176,7 +174,18 @@ class ApiClient {
 
         // Handle authentication errors
         if (status === 403) {
+          const requestEpoch = (error.config as EpochedRequestConfig | undefined)?.__sessionEpoch;
+          if (requestEpoch !== undefined && requestEpoch !== this.sessionEpoch) {
+            // This request was issued under a session that's already been
+            // superseded (e.g. a poll for the server we've since switched
+            // away from). Its 403 says nothing about the *current* session,
+            // so don't clear its cookie or report a real auth failure —
+            // that would wipe a session another connect just established.
+            clogWarn('HTTP', `403 from superseded session — ignoring: ${reqUrl}`);
+            throw apiError('Request superseded by a newer session.', status);
+          }
           this.cookies = '';
+          this.sessionEpoch++;
           clogError('HTTP', `403 Forbidden — ${reqUrl}`);
           throw apiError('Authentication failed. Please check your credentials.', status);
         }
@@ -269,6 +278,7 @@ class ApiClient {
       this.cookies = '';
       this.apiVersion = null;
       this.cachedFeatures = null;
+      this.sessionEpoch++;
     }
     this.currentServer = server;
     if (server) {
@@ -284,10 +294,30 @@ class ApiClient {
 
   clearCookies() {
     this.cookies = '';
+    this.sessionEpoch++;
   }
 
   getCookies(): string {
     return this.cookies;
+  }
+
+  /**
+   * Merge Set-Cookie values into the jar by name instead of replacing it.
+   * A reverse proxy in front of qBittorrent may set its own cookie on any
+   * response (Cloudflare __cf_bm, forward-auth session cookies); replacing the
+   * jar wholesale dropped SID and forced a re-login on the next request.
+   */
+  private mergeCookies(setCookie: string | string[]): void {
+    const jar = new Map<string, string>();
+    const put = (pair: string) => {
+      const trimmed = pair.trim();
+      if (!trimmed) return;
+      const eq = trimmed.indexOf('=');
+      jar.set(eq === -1 ? trimmed : trimmed.slice(0, eq), trimmed);
+    };
+    this.cookies.split(';').forEach(put);
+    (Array.isArray(setCookie) ? setCookie : [setCookie]).forEach((raw) => put(raw.split(';')[0]));
+    this.cookies = Array.from(jar.values()).join('; ');
   }
 
   async postFormData(url: string, data: FormData): Promise<unknown> {

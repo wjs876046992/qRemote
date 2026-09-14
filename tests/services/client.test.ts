@@ -193,6 +193,10 @@ describe('apiClient', () => {
   describe('response interceptor — success (cookie capture)', () => {
     beforeEach(() => {
       apiClient.setServer(makeServer());
+      // Cookies now merge by name rather than being replaced wholesale, so
+      // the jar persists across requests within a test — start each test
+      // from an empty jar so tests stay independent of ordering.
+      apiClient.clearCookies();
     });
 
     it('captures a single set-cookie header', () => {
@@ -229,6 +233,34 @@ describe('apiClient', () => {
       expect(apiClient.getCookies()).toBe('SID=viaget');
     });
 
+    it('merges a proxy cookie set on a later response, keeping the session cookie', () => {
+      capturedResponseInterceptorSuccess!({
+        headers: { 'set-cookie': 'SID=abc; Path=/' },
+        data: 'Ok.',
+        status: 200,
+      });
+      capturedResponseInterceptorSuccess!({
+        headers: { 'set-cookie': '__cf_bm=zzz; Path=/' },
+        data: '',
+        status: 200,
+      });
+      expect(apiClient.getCookies()).toBe('SID=abc; __cf_bm=zzz');
+    });
+
+    it('replaces a cookie in place by name on re-login instead of appending a duplicate', () => {
+      capturedResponseInterceptorSuccess!({
+        headers: { 'set-cookie': 'SID=old; Path=/' },
+        data: 'Ok.',
+        status: 200,
+      });
+      capturedResponseInterceptorSuccess!({
+        headers: { 'set-cookie': 'SID=new; HttpOnly' },
+        data: 'Ok.',
+        status: 200,
+      });
+      expect(apiClient.getCookies()).toBe('SID=new');
+    });
+
     it('leaves cookies untouched when no set-cookie header exists', () => {
       apiClient.clearCookies();
       capturedResponseInterceptorSuccess!({ headers: { 'x-other': 'val' }, data: '', status: 200 });
@@ -262,6 +294,61 @@ describe('apiClient', () => {
       });
       expect(apiClient.getCookies()).not.toBe('');
       const err = makeErr({ response: { status: 403 } });
+      expect(() => capturedResponseInterceptorError!(err)).toThrow(
+        'Authentication failed. Please check your credentials.',
+      );
+      expect(apiClient.getCookies()).toBe('');
+    });
+
+    it('ignores a 403 from a request issued under a session that has since been superseded', () => {
+      apiClient.setServer(makeServer({ id: 'server-1' }));
+      const staleConfig = runRequestInterceptor() as { __sessionEpoch?: number };
+
+      // Switch to a different server — bumps the session epoch and clears cookies.
+      apiClient.setServer(makeServer({ id: 'server-2' }));
+
+      // server-2 logs in successfully.
+      capturedResponseInterceptorSuccess!({
+        headers: { 'set-cookie': 'SID=new' },
+        data: '',
+        status: 200,
+      });
+      expect(apiClient.getCookies()).toBe('SID=new');
+
+      // A 403 now arrives for a request that was issued back under server-1's
+      // session — it must not be able to clear server-2's fresh cookie.
+      const staleErr = makeErr({
+        config: {
+          baseURL: 'http://example.com',
+          url: '/api/v2/x',
+          __sessionEpoch: staleConfig.__sessionEpoch,
+        },
+        response: { status: 403 },
+      });
+      expect(() => capturedResponseInterceptorError!(staleErr)).toThrow(
+        'Request superseded by a newer session.',
+      );
+      expect(apiClient.getCookies()).toBe('SID=new');
+    });
+
+    it('still clears cookies for a 403 stamped with the current session epoch', () => {
+      apiClient.setServer(makeServer({ id: 'server-1' }));
+      const currentConfig = runRequestInterceptor() as { __sessionEpoch?: number };
+      capturedResponseInterceptorSuccess!({
+        headers: { 'set-cookie': 'SID=abc' },
+        data: '',
+        status: 200,
+      });
+      expect(apiClient.getCookies()).not.toBe('');
+
+      const err = makeErr({
+        config: {
+          baseURL: 'http://example.com',
+          url: '/api/v2/x',
+          __sessionEpoch: currentConfig.__sessionEpoch,
+        },
+        response: { status: 403 },
+      });
       expect(() => capturedResponseInterceptorError!(err)).toThrow(
         'Authentication failed. Please check your credentials.',
       );
