@@ -1,4 +1,9 @@
-import { siteHost, extractBracketTag, resultTrackerLabel } from '@/utils/searchResult';
+import {
+  siteHost,
+  extractBracketTag,
+  stripBracketTag,
+  resultTrackerLabel,
+} from '@/utils/searchResult';
 import { SearchResult } from '@/types/api';
 
 function makeResult(overrides: Partial<SearchResult> = {}): SearchResult {
@@ -26,6 +31,26 @@ describe('siteHost', () => {
   it('falls back to the full stripped string when it starts with a slash', () => {
     // split('/')[0] is '' for a leading slash, so the `|| stripped` fallback fires
     expect(siteHost('/relative/path')).toBe('/relative/path');
+  });
+});
+
+describe('stripBracketTag', () => {
+  it('removes a trailing indexer tag and the whitespace before it', () => {
+    expect(stripBracketTag('Some.Title.2024.1080p [MyIndexer]')).toBe('Some.Title.2024.1080p');
+  });
+
+  it('removes a leading indexer tag', () => {
+    expect(stripBracketTag('[1337x] Some.Title.2024')).toBe('Some.Title.2024');
+  });
+
+  it('keeps quality/codec brackets, since they are not indexer names', () => {
+    expect(stripBracketTag('Movie.2024 [1080p]')).toBe('Movie.2024 [1080p]');
+    expect(stripBracketTag('[REQ] Movie [MyIndexer]')).toBe('[REQ] Movie');
+  });
+
+  it('returns the name unchanged when there is no tag, and "" for empty input', () => {
+    expect(stripBracketTag('Plain Name')).toBe('Plain Name');
+    expect(stripBracketTag('')).toBe('');
   });
 });
 

@@ -105,6 +105,30 @@ describe('resolveServerEndpoint', () => {
     expect(resolved.basePath).toBe('/alt');
   });
 
+  it('carries the shared qui proxy key into the fallback endpoint (#272)', () => {
+    const server: ServerConfig = {
+      ...baseServer,
+      useQuiProxy: true,
+      quiProxyKey: 'quikey',
+      basePath: '/qui',
+      useFallback: true,
+      fallbackHost: 'lan.local',
+      fallbackPort: 7476,
+      fallbackBasePath: '/',
+    };
+    const primary = resolveServerEndpoint(server, 'primary');
+    const fallback = resolveServerEndpoint(server, 'fallback');
+    expect(primary).toMatchObject({ useQuiProxy: true, quiProxyKey: 'quikey', basePath: '/qui' });
+    // The fallback's own (root) base path wins over the primary's qui base path.
+    expect(fallback).toMatchObject({
+      host: 'lan.local',
+      port: 7476,
+      basePath: '/',
+      useQuiProxy: true,
+      quiProxyKey: 'quikey',
+    });
+  });
+
   it('falls back to primary useHttps/basePath when fallback overrides are unset', () => {
     const server: ServerConfig = {
       ...baseServer,

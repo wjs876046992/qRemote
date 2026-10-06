@@ -1,12 +1,14 @@
 import {
+  getRssFeedDisplayName,
   flattenRssTree,
   isRssFeed,
   joinRssPath,
   parentRssPath,
   rssPathBaseName,
+  sortArticlesByDateDesc,
   toSearchQuery,
 } from '@/utils/rss';
-import { RssFeed, RssItemsResponse } from '@/types/api';
+import { RssArticle, RssFeed, RssItemsResponse } from '@/types/api';
 
 const feed = (url: string): RssFeed => ({ uid: url, url });
 
@@ -120,5 +122,76 @@ describe('toSearchQuery', () => {
 
   it('collapses internal whitespace left behind after stripping', () => {
     expect(toSearchQuery('Title  (2018)  Subtitle')).toBe('Title 2018 Subtitle');
+  });
+});
+
+describe('sortArticlesByDateDesc', () => {
+  const article = (id: string, date?: string): RssArticle => ({ id, title: id, date });
+
+  it('sorts dated articles newest first', () => {
+    const oldest = article('a', '2024-01-01T00:00:00Z');
+    const middle = article('b', '2024-06-01T00:00:00Z');
+    const newest = article('c', '2024-12-01T00:00:00Z');
+    expect(sortArticlesByDateDesc([oldest, newest, middle])).toEqual([newest, middle, oldest]);
+  });
+
+  it('puts undated entries last, keeping their original relative order', () => {
+    const dated = article('dated', '2024-06-01T00:00:00Z');
+    const undated1 = article('undated1');
+    const undated2 = article('undated2');
+    expect(sortArticlesByDateDesc([undated1, dated, undated2])).toEqual([
+      dated,
+      undated1,
+      undated2,
+    ]);
+  });
+
+  it('treats an unparseable date string as undated', () => {
+    const dated = article('dated', '2024-06-01T00:00:00Z');
+    const garbage = article('garbage', 'not-a-real-date');
+    expect(sortArticlesByDateDesc([garbage, dated])).toEqual([dated, garbage]);
+  });
+
+  it('leaves a feed with no dates at all in its original order', () => {
+    const first = article('first');
+    const second = article('second');
+    const third = article('third');
+    expect(sortArticlesByDateDesc([first, second, third])).toEqual([first, second, third]);
+  });
+
+  it('does not mutate the input array', () => {
+    const oldest = article('a', '2024-01-01T00:00:00Z');
+    const newest = article('b', '2024-12-01T00:00:00Z');
+    const input = [oldest, newest];
+    const result = sortArticlesByDateDesc(input);
+    expect(input).toEqual([oldest, newest]);
+    expect(result).not.toBe(input);
+  });
+
+  it('returns an empty array unchanged', () => {
+    expect(sortArticlesByDateDesc([])).toEqual([]);
+  });
+});
+
+describe('getRssFeedDisplayName', () => {
+  const feed = { url: 'https://example.com/rss.xml', title: 'Example Releases' };
+
+  it('shows the name the user gave the feed', () => {
+    expect(getRssFeedDisplayName('My Shows', feed)).toBe('My Shows');
+  });
+
+  it('keeps a rename inside a folder', () => {
+    expect(getRssFeedDisplayName('TV\\My Shows', feed)).toBe('My Shows');
+  });
+
+  it('falls back to the feed title when the name is just the URL (never renamed)', () => {
+    expect(getRssFeedDisplayName('https://example.com/rss.xml', feed)).toBe('Example Releases');
+    expect(getRssFeedDisplayName('TV\\https://example.com/rss.xml', feed)).toBe('Example Releases');
+  });
+
+  it('falls back to the URL when an unnamed feed has no title yet', () => {
+    expect(getRssFeedDisplayName('https://example.com/rss.xml', { ...feed, title: '' })).toBe(
+      'https://example.com/rss.xml',
+    );
   });
 });

@@ -281,7 +281,7 @@ re-add one without being asked.
   (`apiClient`).
 - **Styling** — every color comes from `useTheme()`. Users can override any
   color via the in-app picker.
-- **i18n** — react-i18next, six locales.
+- **i18n** — react-i18next, seven locales.
 - **Deep links** — magnet URLs and `.torrent` files arrive via a `Linking`
   listener in `app/_layout.tsx`. `app/+native-intent.ts` returns `null` for those
   URLs so Expo Router doesn't try to treat a `file://…torrent` path as a route
@@ -304,6 +304,18 @@ plain, but the whole `customHeaders` array is a secret (values are tokens),
 JSON-stringified into `server_custom_headers_{id}` and forced to `[]` in
 AsyncStorage.
 
+qui Client Proxy (`useQuiProxy`, #272) again: the flag is plain — **and must be
+listed in `saveServer`'s explicit field map** — while `quiProxyKey` is a secret
+in `server_qui_proxy_key_{id}`, forced to `''` in AsyncStorage (including
+`deleteServer`'s whole-list rewrite), stripped by `utils/server-export.ts`,
+kept per-device by `importServers`, and blanked in the Settings → Advanced
+settings-import path. The key is a *URL path segment*, so it can also leak
+through anything that logs a URL: every clog / thrown message / debug-report
+site in `services/api/client.ts` and `components/SuperDebugPanel.tsx` runs URLs
+through `redactQuiProxyKey` (`utils/quiProxy.ts`). The client does this only for
+requests it stamped as qui (`config.__quiProxy`), because `/proxy/<x>` is also
+a legitimate qBittorrent base path that diagnostics must keep showing.
+
 Be deliberate whenever you touch code that persists a `ServerConfig` — including
 paths that rewrite the *whole* server list, such as add, edit, delete, and
 import. A secret must never reach AsyncStorage, and bulk rewrites are the easiest
@@ -312,8 +324,25 @@ place to let one slip through.
 ### Auth modes
 
 A server's auth mode is *derived*, not stored — see `utils/authMode.ts`
-(`password` | `apiKey` | `none`). Legacy records that only ever set `bypassAuth`
-keep working; when both `useApiKey` and `bypassAuth` are set, API key wins.
+(`password` | `apiKey` | `none` | `quiProxy`). Legacy records that only ever set
+`bypassAuth` keep working; when several flags are set the more specific wins:
+**qui proxy > API key > none > password**.
+
+`quiProxy` (#272) connects through a [qui](https://getqui.com) Client Proxy URL
+`http(s)://host[:port][/qui-base]/proxy/<key>` with no username/password. There
+is no URL-path field on `ServerConfig`, so the pasted URL is parsed
+(`utils/quiProxy.ts` `parseQuiProxyUrl`) into `host`/`port`/`useHttps`/`basePath`
+(= the qui base path) plus the secret `quiProxyKey`, and `services/api/client.ts`
+re-joins `<basePath>/proxy/<key>` per request. qui's `/auth/login` is a no-op, so
+`ServerManager` takes the no-login path (like `apiKey`), skips logout on
+disconnect, sends no Bearer header (Basic Auth / custom headers still apply for
+a gateway in front of qui), and maps qui's 401 "Invalid API key" / "Missing API
+key" to `QUI_KEY_REJECTED_MESSAGE`. A qui server's fallback endpoint is a second
+qui URL for the same instance: only its host/port/HTTPS/base path are used and
+the primary's key is reused (no second secret). The add/edit forms hide
+username/password/API key and host/port/HTTPS in this mode and show one masked
+`QuiProxyUrlField`; the edit screen repopulates it with `buildQuiProxyUrl`
+(ending at `/proxy/` for an imported server whose key was stripped).
 
 ---
 
@@ -326,9 +355,9 @@ Complete map. Trust it.
 | Path | Notes |
 |---|---|
 | `app/(tabs)/(torrents)/` | Torrents tab as a nested stack: `index` list, `torrent/[hash]`, `torrent/files`, `torrent/manage-trackers`. Group is omitted from URLs → `/`, `/torrent/[hash]`. |
-| `app/(tabs)/search.tsx` | Search tab: job polling UI, plugin/category/indexer filter chips, client-side sort, collapsing header. Optional auto-tag-by-tracker on add (`autoCategorizeByTracker` pref — tags Search downloads only; the key name is historical). |
+| `app/(tabs)/search.tsx` | Search tab: job polling UI, plugin/category/indexer filter chips, client-side sort (keys: seeders/leechers/size/name/date/quality — Quality, #268, ranks by the resolution in the release name via `utils/video-quality.ts` and keeps unknown-quality results last in both directions; the sort dropdown also hosts the persisted "Hide zero seeders" toggle, `searchHideZeroSeeders` pref, and the persisted "Group duplicates" toggle, `searchGroupDuplicates` pref, default **on** — #267), a funnel-button filter panel (`components/SearchFilterPanel.tsx`: "Search in" names-only/everywhere — persisted `searchInMode` pref — plus session-only text, seeders and size filters, WebUI parity, #266), collapsing header. Result pipeline (`filteredResults` → `listItems`): dedupe → tracker chips → panel filters → hide zero seeders → group duplicates → sort by each group's primary (with grouping off every result is a group of one, so the list is exactly as before). Grouping (#267) collapses results that look like one torrent — same magnet `btih`, or same normalized name + exact size, confirmed on qBit 5.2+ by resolving duplicate-looking `.torrent` links through `torrents/fetchMetadata` — into one `SearchResultGroupRow`; the row's `+` adds the whole group (one merged magnet carrying every source's trackers, or the primary `.torrent` plus an `addTrackers` top-up once the torrent exists), a source's own `+` adds only that source. "names only" matches the last *submitted* pattern, not the live query box. Optional auto-tag-by-tracker on add (`autoCategorizeByTracker` pref — tags Search downloads only; the key name is historical). |
 | `app/(tabs)/transfer.tsx` | Transfer stats, global speed and seeding limits. |
-| `app/(tabs)/logs.tsx` | Connectivity logs. `href: null` — reached from Settings → Advanced, not a visible tab. |
+| `app/(tabs)/logs.tsx` | qBittorrent's own server-side application + peer log viewer (`logs/main`, `logs/peers` via `services/api/logs.ts`) — needs a live connection, shows a "not connected" placeholder otherwise. `href: null` — reached from Settings → Advanced ("Server Logs" row), not a visible tab. Not the app's own connectivity/diagnostic log — see `components/LogViewer.tsx` for that. |
 | `app/(tabs)/rss/` | RSS Feeds tab (`index` tree + `feed` detail). `href` is null until connected **and** the server's `rss_processing_enabled` is on. Rules and settings screens do **not** go here — they live under Settings. |
 | `app/(tabs)/settings/` | Settings tab as a nested stack. See sub-screens below. |
 | `app/(tabs)/_layout.tsx` | Tab bar and tab gating. |
@@ -336,7 +365,7 @@ Complete map. Trust it.
 | `app/+native-intent.ts` | Suppresses Router navigation for magnet / `.torrent` URLs. |
 | `app/torrents/add.tsx` | Add-torrent flow (magnet or file, plus options). Root stack → no tab bar. Uses `PathAutocompleteInput`. |
 | `app/search/plugins.tsx` | Search plugin install/enable/uninstall (`app/search/_layout.tsx` stack). Root stack. Also linked from the Settings hub. |
-| `app/server/add.tsx`, `app/server/[id].tsx` | Server add/edit, presented as native modal sheets → they mount `<ModalToast/>` locally. |
+| `app/server/add.tsx`, `app/server/[id].tsx` | Server add/edit, presented as native modal sheets → they mount `<ModalToast/>` locally. The two are near-duplicates — a change to the form (auth methods, validation, the `ServerConfig` they build) must be made in both. `qui Proxy` auth mode (#272) swaps the host/port/HTTPS/credential fields for one `QuiProxyUrlField`. |
 
 **Settings sub-screens** — hub order on `index` is Servers → Appearance → Server
 Settings → Connection → RSS → Search Plugins → Advanced, then What's New →
@@ -418,14 +447,26 @@ All PascalCase function components taking a `…Props` interface.
   `SavePathPickerModal` (filterable list of save paths already in use, derived
   from TorrentContext via `utils/save-paths.ts` — works on any qBittorrent
   version), `SearchCartModal` (review sheet for the Search tab's add queue —
-  list, per-item remove, Clear all, Checkout — see `SearchCartContext.tsx`).
+  list, per-item remove, Clear all, Checkout — see `SearchCartContext.tsx`),
+  `SearchFilterPanel` (floating filter panel under the Search tab's search row
+  — "Search in" chips, text filter, seeders and size min/max with cycling unit
+  chips, Clear; controlled, state lives in `search.tsx` as a
+  `SearchFilterDraft` — #266),
+  `ServerSwitcherModal` (quick server switcher sheet, #249 — opened from a
+  compact badge+name in the torrents screen header; lists saved servers, marks
+  the connected one, taps another to call `connectToServer` directly; owns its
+  own transient switching-id/error state rather than threading it through the
+  screen, mirroring `QuickConnectPanel`'s row treatment).
 - **Torrent / search UI** — `TorrentCard` (`React.memo` with a **custom
   comparator — keep it in sync when you add a rendered field**, or the card
   silently stops updating; category/tag stickers use `categoryColors`/`tagColors`
   then defaults then the `avatarColor` fallback), `SearchResultRow` (+ internal
   ActionPill; the `+` button and the cart-toggle button are independent — see
-  its header comment), `FilterChip`, `EmptyState`, `SkeletonLoader`
-  (+ `SkeletonTorrentCard`, `SkeletonTorrentDetail` — the latter covers the
+  its header comment; takes an optional `footer` node), `SearchResultGroupRow`
+  (#267 — one list row for a `SearchResultGroup`: a group of one is the plain
+  `SearchResultRow`, a group of 2+ is its primary plus an "N sources" toggle and
+  compact per-source add/cart rows in the card's `footer`), `FilterChip`,
+  `EmptyState`, `SkeletonLoader` (+ `SkeletonTorrentCard`, `SkeletonTorrentDetail` — the latter covers the
   detail screen while a dead session reconnects), `PieceMap`,
   `ServerIconBadge` (per-server tinted
   icon badge — `ServerConfig.icon`/`iconColor` via `utils/server.ts`
@@ -437,11 +478,18 @@ All PascalCase function components taking a `…Props` interface.
   `AVATAR_PALETTE` swatches plus a "custom color" swatch that opens the full
   `ColorPicker`), `CustomHeadersSection` (per-server custom HTTP header
   key/value rows, max 5, used by the same two screens — see
-  `utils/customHeaders.ts`).
+  `utils/customHeaders.ts`), `QuiProxyUrlField` (the single masked "qui Proxy
+  URL" input — eye toggle, inline parse error, key-masked preview, hint — shown
+  by the same two screens for the `quiProxy` auth mode and for its fallback URL;
+  see `utils/quiProxy.ts`).
 - **Visuals** — `SpeedGraph`, `CircularProgress`, `AnimatedProgressBar`,
   `AnimatedButton`, `Confetti`.
 - **Chrome / diagnostics** — `FocusAwareStatusBar`, `SettingRow`,
-  `QuickConnectPanel`, `LogViewer`, `DebugRow`, `SuperDebugPanel`.
+  `QuickConnectPanel`, `LogViewer` (modal viewer for the app's own in-memory
+  connectivity log, `services/connectivity-log.ts` — copy-to-clipboard via
+  `formatConnectivityLog()`; opened from Settings → Advanced's "View
+  Connectivity Logs" row; works with no live server connection, unlike
+  `app/(tabs)/logs.tsx`), `DebugRow`, `SuperDebugPanel`.
 
 ### API wrappers (`services/api/`)
 
@@ -450,7 +498,8 @@ Thin objects over `apiClient`.
 - **`client.ts`** — the axios singleton. Holds server config, cookies, API
   version and the Basic Auth header, and normalizes HTTP failures into
   human-readable `Error`s. **Callers substring-match those messages — grep
-  before rewording one.**
+  before rewording one.** `postUrlEncodedWithStatus` is `postUrlEncoded` plus the
+  2xx status, for endpoints that signal progress with 202 vs 200.
 - `auth.ts` (login/logout) · `sync.ts` (`getMainData` rid-sync, `getTorrentPeers`) ·
   `transfer.ts` (global speed + seeding limits, alt-speed toggle, `banPeers`) ·
   `application.ts` (version/buildInfo/preferences/cookies, `getDirectoryContent`) ·
@@ -461,7 +510,9 @@ Thin objects over `apiClient`.
   contents/pieces; pause/resume/delete/recheck/reannounce; add (URL + file);
   tracker and peer edits; queue and file priorities; limits and share-limits;
   location/name/category/tags; AMM, sequential, first/last piece, force start,
-  super seeding; `renameFile`/`renameFolder`.
+  super seeding; `renameFile`/`renameFolder`; `fetchMetadata` (qBit 5.2+ /
+  WebAPI ≥ 2.11.9, `ApiFeatures.supportsFetchMetadata` — resolve a URL/magnet to
+  info hash + trackers without adding it; 202 = still downloading, 200 = ready).
 
 ### Services (`services/`)
 
@@ -475,8 +526,13 @@ Thin objects over `apiClient`.
   before the iOS security-scoped access can lapse.
 - **`query-client.ts`** — the shared TanStack `QueryClient`.
 - **`color-theme-manager.ts`** — save/load/apply user color themes.
-- **`connectivity-log.ts`** — in-memory ring log (`clogDebug/Info/Warn/Error(tag, msg)`).
-- **`log-storage.ts`** — persisted entries for the Logs screen.
+- **`connectivity-log.ts`** — in-memory ring log (`clogDebug/Info/Warn/Error(tag, msg)`),
+  displayed by `components/LogViewer.tsx`.
+- **`search-tracker-topup.ts`** — #267: after a Search group of `.torrent` links is
+  added, waits (up to ~3 min, abortable) for the torrent to appear by ID and calls
+  `addTrackers` with the other sources' trackers. `prepareTrackerTopUp` first checks
+  the client doesn't already have the torrent; everything is silent best-effort.
+  Also exports `abortableDelay`, shared with `search.tsx`'s auto-tag poll.
 
 ### Native modules (`modules/`)
 
@@ -491,12 +547,25 @@ Thin objects over `apiClient`.
   `services/server-manager.ts`); every other host and every non-server-trust
   challenge (Basic Auth, client cert) falls through to default handling
   unchanged. iOS only; requires `npm run xcode` to pick up (new native code,
-  not just a generated-file patch).
+  not just a generated-file patch). `isInsecureCertAllowlistAvailable()` (#256)
+  reports whether the native side is actually present in the running binary —
+  see [§10 Gotchas](#10-gotchas) for why that can differ from the JS wrapper
+  loading fine. `services/server-manager.ts`'s `syncInsecureCertAllowlist`
+  warns via `clogWarn('CERT', …)` when a server wants the flag but it's
+  unavailable; the server add/edit screens show a matching hint under the
+  toggle.
 
 ### Hooks (`hooks/`)
 
 - `useSearchJob.ts` — search job lifecycle: start/stop/delete, 2s status+results
   polling, unmount cleanup.
+- `useSearchHashResolver.ts` — #267: for Search results that look like duplicates,
+  asks `torrents/fetchMetadata` (qBit 5.2+) for the `.torrent` links' info hash +
+  trackers, returning `fileUrl → ResolvedSource` for `groupSearchResults`. Politely
+  capped: 3 in flight, 30 per search job (most-seeded first), re-poll a 202 every 2s
+  up to 5 calls, errors are silent, nothing is requested twice, and a new job or
+  unmount aborts and ignores stale replies. `downloader=<engineName>` only when
+  supported and the source isn't an aggregator (Prowlarr/Jackett).
 - `useTorrentActions.ts` — builds the per-torrent action menu for the **list
   screen only**. Delete exposes `deleteConfirmVisible` for a caller-mounted
   `ConfirmModal`. The **detail screen does not use this hook** — it hand-rolls
@@ -518,27 +587,62 @@ Pure and well-tested. **Put logic here whenever it doesn't need React.**
 and availability **FLOOR**, never round up) · `torrent-state.ts` (state → color/
 label, completion and ETA rules) · `limit-input.ts` (share-limit sentinels:
 `-2` = follow global, `-1` = unlimited; own-vs-effective limit resolution) ·
-`error.ts` (`getErrorMessage`) · `apiVersion.ts` (parse + `ApiFeatures` gating) ·
+`error.ts` (`getErrorMessage`, `isTlsRejection` — recognizes iOS rejecting a
+server's TLS certificate from the free-text error description RN's XHR
+bridge exposes, matched across all seven locales since that text is localized
+to the device language — #256) · `apiVersion.ts` (parse + `ApiFeatures` gating) ·
 `connection-settings.ts` (`resolveConnectionSettings` — resolves the axios
 connection timeout / retry count from raw stored preferences, falling back to
 `DEFAULT_PREFERENCES` on missing or corrupt values while still honoring a
 legitimately saved `retryAttempts: 0`) ·
 `server.ts` (endpoint resolution incl. fallback URL, avatar colors, and
 `getServerIcon`/`getServerIconColor` for the per-server badge — #224) ·
-`authMode.ts` (derives `password`/`apiKey`/`none`) · `basicAuth.ts` ·
+`authMode.ts` (derives `password`/`apiKey`/`none`/`quiProxy`) · `basicAuth.ts` ·
+`quiProxy.ts` (qui Client Proxy URLs, #272 — `parseQuiProxyUrl`/`buildQuiProxyUrl`
+for the pasted `…/proxy/<key>` URL, `withQuiProxyPath` for the request path,
+`redactQuiProxyKey` for logs/errors/debug text, and the `QUI_KEY_*` messages
+`ServerManager` matches) ·
 `customHeaders.ts` (per-server custom HTTP headers — sanitize/validate, and the
 reserved-name set the app manages itself: Authorization, Cookie, Referer,
 Origin, Content-Type, Host — #228) ·
 `magnet.ts` / `torrent-file.ts` (incoming link and file parsing) · `rss.ts`
-(RSS tree flattening; paths join with `\`) · `searchResult.ts` (indexer-label
-heuristics) · `login-response.ts` (qBittorrent login body/cookie interpretation) ·
+(RSS tree flattening; paths join with `\`; `getRssFeedDisplayName` — a feed's
+name is its path, which qBit defaults to the URL, so a never-renamed feed shows
+its own title and a rename wins, #273) · `searchResult.ts` (indexer-label
+heuristics) · `search-filters.ts` (`filterSearchResults(results, opts)` —
+client-side Search result filters: `hideZeroSeeders` (hides only an explicit
+`nbSeeders === 0`, never the `-1` "unknown" sentinel — #270) and the #266
+WebUI-parity filters `nameTerms` / `filterText` (all whitespace-separated
+terms must be in the name, case-insensitive, `-term` excludes — no quotes, no
+accent folding, same as WebUI `containsAllTerms`), seeders and size ranges
+(0/unset = no bound, swapped min/max are reordered; unlike the WebUI, unknown
+`-1`/`0` values are *kept* by a range), and `qualities` (#268 — keep only 720p /
+1080p / 2160p names via `video-quality.ts`; unrecognized quality is hidden while
+one is selected). Also `tokenizeTerms`,
+`parseSizeInput`/`parseSeedersInput`, `hasActiveFilters`, and the
+`SearchFilterDraft` ⇄ options helpers behind `SearchFilterPanel`. Runs before
+the sort in `search.tsx`) · `search-grouping.ts` (#267 — pure Search-result
+grouping: `extractBtih` (hex or base32 magnet hash → lowercase hex),
+`normalizeName`/`nameSizeKey`,
+`findResolutionCandidates` (duplicate-looking `.torrent` links worth resolving),
+`groupSearchResults(results, resolved)` → `SearchResultGroup[]` (primary = most
+seeders; known hashes always win over the name+size guess, so two different hashes
+never merge), `mergeMagnets` (union of `tr=`), `planGroupAdd`/`collectGroupTrackers`
+(how adding a group works)) · `video-quality.ts` (`getVideoQualityRank(fileName)` —
+resolution rank parsed from a release name by whole alphanumeric token: 2160p/4K/UHD
+= 4, 1440p = 3.5, 1080p/1080i/FHD = 3, 720p = 2, 576p–240p/SD/DVD = 1, unknown = 0;
+never reads `x264`/`h264` or a bare `1080`/year as a resolution, and deliberately
+skips ambiguous "2K". `getVideoQualityLabel(rank)` for display, and
+`compareByQuality(a, b, dir)` — the Search "Quality" sort comparator: unknown
+last in *both* directions, ties by seeders desc with `-1` as 0 — #268) ·
+`login-response.ts` (qBittorrent login body/cookie interpretation) ·
 `haptics.ts` (global toggle + wrappers) · `tags.ts` (CSV tag parsing) ·
 `add-torrent-dialogue.ts` (compact vs full variant, plus `getSearchAddOpensDialogue`
 for the Search tab's `+` behavior — #217) · `search-cart.ts`
 (`groupCartItemsForAdd` — splits a `SearchCartContext` cart into one
 `torrents/add` batch per indexer when auto-tag-by-tracker is on, since that
 endpoint applies one `tags` value per request) · `server-export.ts` (strips
-`password`/`basicAuthPassword`/`apiKey` on export, forces them empty on import) ·
+`password`/`basicAuthPassword`/`apiKey`/`quiProxyKey` on export, forces them empty on import) ·
 `save-paths.ts` (`getKnownSavePaths`, derived from live data — no API call) ·
 `version.ts` (`APP_VERSION`) · `trackers.ts` (`isRealTracker` — filters
 qBittorrent's DHT/PeX/LSD pseudo-tracker entries out of `torrents/trackers`;
@@ -561,7 +665,7 @@ base).
   by `TorrentContext` and `TransferContext` for their quick-app-switch gate).
   **Use these tokens; don't invent ad-hoc spacing.**
 - `i18n/index.ts` initializes react-i18next. Each locale is ONE file,
-  `locales/{en,es,zh,fr,de,ru}/translation.json`, holding every namespace:
+  `locales/{en,es,zh,fr,de,ru,pl}/translation.json`, holding every namespace:
   `common`, `states`, `screens`, `placeholders`, `actions`, `alerts`, `server`,
   `torrentDetail`, `filters`, `sort`, `toast`, `errors`. Keys read like
   `t('actions.pause')`.
@@ -573,7 +677,7 @@ base).
 Exact touch-lists for recurring work. Follow them; don't rediscover.
 
 **Add or change a user-facing string**
-Add the key to **all six** `locales/*/translation.json` and use it via `t('ns.key')`.
+Add the key to **all seven** `locales/*/translation.json` and use it via `t('ns.key')`.
 Actually translate — the parity test rejects English copied verbatim into another
 locale (for strings ≥16 chars). `npm test` names any file you missed.
 
@@ -780,3 +884,49 @@ Keep entries factual and current; if you find one that's no longer true
   parameter "works" in the UI but has no visible server-side effect, check it
   against qBittorrent's `torrentscontroller.cpp` source, not the wiki — the
   wiki is not reliably kept in sync with parameter renames.
+- **`torrents/fetchMetadata` (qBit 5.2+) is easy to misread.** HTTP status is
+  the progress signal: **202** = still working, **200** = ready. For an http(s)
+  URL the *first* call only queues the download (202, body `{}`); call again with
+  the same `source` until 200 or an error. The torrent ID in the body is `hash`
+  (not `id`), alongside `infohash_v1` / `infohash_v2` (empty string when absent)
+  and `trackers` as `{url, tier}` objects. The server percent-decodes `source` a
+  second time, so `torrentsApi.fetchMetadata` pre-encodes it. Search results
+  carry no hash at all (only a magnet `fileUrl` reveals one), which is why the
+  Search grouping resolves candidates instead of reading a field. Source:
+  `torrentscontroller.cpp` `fetchMetadataAction` — it is not in the 5.0 or 4.1 wikis.
+- **A feature backed by a local Expo native module (`modules/*`) can be
+  rendered by an OTA update on a binary that predates that module, and the
+  JS wrapper no-ops silently instead of erroring.** OTA JS updates ship
+  independently of the native binary (`app.config.js`'s `runtimeVersion.policy:
+  'appVersion'` ties an OTA update to any binary on the same app version,
+  native code included or not), so a device can receive a feature's JS
+  without ever having its native half. `modules/insecure-cert-allowlist`
+  hit exactly this (#256): the toggle looked like it did nothing, with no
+  error anywhere. The fix is an explicit availability check
+  (`isInsecureCertAllowlistAvailable()`) that callers use to warn or hint in
+  the UI — don't assume a native module is present just because requiring it
+  didn't throw at JS-parse time.
+- **"View Connectivity Logs" used to open qBittorrent's own server-log
+  viewer** (`app/(tabs)/logs.tsx`), which needs a live connection and shows
+  nothing when the app can't connect — exactly the scenario it's needed for
+  (issue #256). The app's real diagnostic trail (`services/connectivity-log.ts`)
+  was never wired to any screen; it's now shown by `components/LogViewer.tsx`,
+  opened from its own "View Connectivity Logs" row in Settings → Advanced.
+- **`services/storage.ts`'s `saveServer` persists servers through an explicit
+  field-by-field map (to keep secrets out of AsyncStorage), so any new
+  `ServerConfig` field is silently dropped on save unless it's added to that
+  map.** `allowInsecureCert` (#206) was missing from it for two months (#256):
+  the toggle "worked" for the session because the in-memory object still had
+  it, then came back OFF on every cold launch and the native TLS allowlist
+  was fed an empty list — a 46ms `ERR_NETWORK` that reported as "Connection
+  timeout". Every layer above (sync calls, native store, host matching) was
+  verified correct twice before anyone read the serializer. When adding a
+  `ServerConfig` field: add it to this map and to `tests/services/storage.test.ts`'s
+  save→reload round-trip in the same change.
+- **RN's `XMLHttpRequest.response` returns `''` once `_hasError` is set;
+  only `.responseText` still carries the native error description.** Any
+  code sniffing the text of a failed request (`utils/error.ts`
+  `extractErrorText`) must read `.responseText` (it throws for non-text
+  `responseType`, so guard it). Tests that mock `request.response` directly
+  pass while the real path silently sees nothing — mock the RN shape
+  (`response: ''`, `responseText: '…'`) instead.

@@ -173,7 +173,7 @@ function TorrentCardInner({
 
   const totalSize = torrent.total_size > 0 ? torrent.total_size : torrent.size || 0;
   const downloaded = torrent.completed || 0;
-  const etaVisible = hasEta(torrent.eta, torrent.progress ?? 0);
+  const etaVisible = hasEta(torrent.eta, torrent.state);
 
   // Always-on stats line (compact + detailed): percent, ETA (when meaningful),
   // down/up speeds, ratio last. Not part of the toggleable field grid.

@@ -20,10 +20,28 @@ describe('getServerAuthMode', () => {
   it('prefers "apiKey" when both useApiKey and bypassAuth are true (hand-edited/imported record)', () => {
     expect(getServerAuthMode({ useApiKey: true, bypassAuth: true })).toBe('apiKey');
   });
+
+  it('returns "quiProxy" when useQuiProxy is true', () => {
+    expect(getServerAuthMode({ useQuiProxy: true })).toBe('quiProxy');
+  });
+
+  it('prefers "quiProxy" over every other flag (precedence: quiProxy > apiKey > none > password)', () => {
+    expect(getServerAuthMode({ useQuiProxy: true, useApiKey: true, bypassAuth: true })).toBe(
+      'quiProxy',
+    );
+    expect(getServerAuthMode({ useQuiProxy: false, useApiKey: true, bypassAuth: true })).toBe(
+      'apiKey',
+    );
+  });
 });
 
 describe('applyServerAuthMode', () => {
-  const creds = { username: '  admin  ', password: '  hunter2  ', apiKey: '  qbt_abc  ' };
+  const creds = {
+    username: '  admin  ',
+    password: '  hunter2  ',
+    apiKey: '  qbt_abc  ',
+    quiProxyKey: '  quikey123  ',
+  };
 
   it('password mode: keeps trimmed username/password, blanks apiKey, bypassAuth false', () => {
     const result = applyServerAuthMode('password', creds);
@@ -33,6 +51,8 @@ describe('applyServerAuthMode', () => {
       bypassAuth: false,
       useApiKey: false,
       apiKey: '',
+      useQuiProxy: false,
+      quiProxyKey: '',
     });
   });
 
@@ -44,6 +64,8 @@ describe('applyServerAuthMode', () => {
       bypassAuth: false,
       useApiKey: true,
       apiKey: 'qbt_abc',
+      useQuiProxy: false,
+      quiProxyKey: '',
     });
   });
 
@@ -55,6 +77,29 @@ describe('applyServerAuthMode', () => {
       bypassAuth: true,
       useApiKey: false,
       apiKey: '',
+      useQuiProxy: false,
+      quiProxyKey: '',
     });
+  });
+
+  it('quiProxy mode: blanks username/password/apiKey, keeps the trimmed key, useQuiProxy true', () => {
+    const result = applyServerAuthMode('quiProxy', creds);
+    expect(result).toEqual({
+      username: '',
+      password: '',
+      bypassAuth: false,
+      useApiKey: false,
+      apiKey: '',
+      useQuiProxy: true,
+      quiProxyKey: 'quikey123',
+    });
+  });
+
+  it('never carries a stale qui key into another mode', () => {
+    for (const mode of ['password', 'apiKey', 'none'] as const) {
+      const result = applyServerAuthMode(mode, creds);
+      expect(result.quiProxyKey).toBe('');
+      expect(result.useQuiProxy).toBe(false);
+    }
   });
 });

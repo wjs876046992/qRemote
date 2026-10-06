@@ -16,6 +16,7 @@ import {
   TorrentPieceState,
   TorrentPieceHash,
   FilePriority,
+  TorrentMetadataResult,
 } from '@/types/api';
 
 const API_VERSION = 'v2';
@@ -408,6 +409,65 @@ export const torrentsApi = {
       hash,
       urls: urls.join('\n'),
     });
+  },
+
+  /**
+   * Resolve a source (http(s) torrent URL, magnet link or bare info hash) to its
+   * metadata without adding the torrent — qBit 5.2+ / WebAPI ≥ 2.11.9 only, gate
+   * on `ApiFeatures.supportsFetchMetadata`.
+   *
+   * Progress is signalled by the HTTP status, so callers poll: for a URL the FIRST
+   * call only queues the download and answers 202 with an empty body; a later call
+   * with the same `source` answers 200 with the full torrent info (info hashes and
+   * `trackers`, an array of `{url, tier}` objects) — or an error when the URL is not
+   * a valid torrent. For a magnet/hash the 202 body already carries the hashes.
+   *
+   * `downloader` (WebAPI ≥ 2.13.1 — gate on `supportsFetchMetadataDownloader`) names a
+   * search plugin that fetches the URL instead of qBittorrent itself, the way
+   * search/downloadTorrent does. An unrecognized parameter is silently ignored by
+   * older servers rather than rejected, so never send it unguarded.
+   */
+  async fetchMetadata(
+    source: string,
+    downloader?: string,
+    signal?: AbortSignal,
+  ): Promise<TorrentMetadataResult> {
+    // qBittorrent percent-decodes `source` a second time after the form body has
+    // been decoded (torrentscontroller.cpp: QUrl::fromPercentEncoding), so a URL
+    // containing %XX would reach the download mangled. Pre-encoding makes the
+    // server's decode hand back exactly the string we were given.
+    const params: Record<string, string> = { source: encodeURIComponent(source) };
+    if (downloader) params.downloader = downloader;
+
+    const { data, status } = await apiClient.postUrlEncodedWithStatus(
+      `/api/${API_VERSION}/torrents/fetchMetadata`,
+      params,
+      signal,
+    );
+
+    const body = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+    const text = (value: unknown): string | undefined =>
+      typeof value === 'string' && value.trim() ? value.trim() : undefined;
+    const ids = {
+      infohashV1: text(body.infohash_v1),
+      infohashV2: text(body.infohash_v2),
+      hash: text(body.hash),
+    };
+
+    if (status === 202) {
+      return { status: 'pending', ...ids };
+    }
+
+    const trackers: string[] = [];
+    if (Array.isArray(body.trackers)) {
+      for (const entry of body.trackers) {
+        const url = text(
+          typeof entry === 'string' ? entry : (entry as { url?: unknown } | null)?.url,
+        );
+        if (url && !trackers.includes(url)) trackers.push(url);
+      }
+    }
+    return { status: 'ready', ...ids, trackers };
   },
 
   /**

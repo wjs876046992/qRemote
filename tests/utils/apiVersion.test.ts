@@ -41,6 +41,8 @@ describe('getApiFeatures', () => {
       hasIsPrivate: true,
       hasModernProxyFields: true,
       supportsI2p: true,
+      supportsFetchMetadata: true,
+      supportsFetchMetadataDownloader: true,
     });
   });
 
@@ -60,6 +62,8 @@ describe('getApiFeatures', () => {
     expect(features.supportsGetDirectoryContent).toBe(false);
     expect(features.supportsSearchPubDate).toBe(false);
     expect(features.supportsI2p).toBe(false);
+    expect(features.supportsFetchMetadata).toBe(false);
+    expect(features.supportsFetchMetadataDownloader).toBe(false);
     // ratio limit fields only require 2.8+, modern proxy fields and is_private only require 2.9+,
     // contentLayout only requires 2.7+
     expect(features.hasRatioLimitFields).toBe(true);
@@ -110,6 +114,27 @@ describe('getApiFeatures', () => {
     expect(features.hasIsPrivate).toBe(true);
     expect(features.hasModernProxyFields).toBe(true);
     expect(features.supportsI2p).toBe(true);
+  });
+
+  it('gates fetchMetadata (#267) on WebAPI 2.11.9, not on the 5.0 boundary', () => {
+    // qBit 5.0 (2.11.0) through 5.1.x (2.11.4) predate the endpoint.
+    expect(getApiFeatures('2.11.0').supportsFetchMetadata).toBe(false);
+    expect(getApiFeatures('2.11.4').supportsFetchMetadata).toBe(false);
+    expect(getApiFeatures('2.11.8').supportsFetchMetadata).toBe(false);
+    expect(getApiFeatures('2.11.9').supportsFetchMetadata).toBe(true);
+    expect(getApiFeatures('2.11.10').supportsFetchMetadata).toBe(true);
+    expect(getApiFeatures('2.12.0').supportsFetchMetadata).toBe(true);
+    expect(getApiFeatures('2.8.19').supportsFetchMetadata).toBe(false);
+  });
+
+  it('gates the fetchMetadata "downloader" param on WebAPI 2.13.1', () => {
+    expect(getApiFeatures('2.11.9').supportsFetchMetadataDownloader).toBe(false);
+    expect(getApiFeatures('2.13.0').supportsFetchMetadataDownloader).toBe(false);
+    expect(getApiFeatures('2.13.1').supportsFetchMetadataDownloader).toBe(true);
+    expect(getApiFeatures('2.15.1').supportsFetchMetadataDownloader).toBe(true);
+    // Unknown/unparseable version assumes the newest feature set.
+    expect(getApiFeatures(null).supportsFetchMetadataDownloader).toBe(true);
+    expect(getApiFeatures('garbage').supportsFetchMetadata).toBe(true);
   });
 
   it('enables v5 features above major version 2 (e.g. 3.0.0)', () => {

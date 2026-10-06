@@ -8,13 +8,17 @@ import { AxiosError } from 'axios';
 import { ServerConfig, ServerEndpointKind } from '@/types/api';
 import { hasFallback, resolveServerEndpoint } from '@/utils/server';
 import { getServerAuthMode } from '@/utils/authMode';
+import { QUI_KEY_MISSING_MESSAGE, isQuiKeyRejection } from '@/utils/quiProxy';
 import { buildServerExport, ServerExportFile } from '@/utils/server-export';
 import { storageService } from './storage';
 import { apiClient } from './api/client';
 import { authApi } from './api/auth';
 import { applicationApi } from './api/application';
 import { clogInfo, clogWarn, clogError } from './connectivity-log';
-import { setInsecureCertAllowedHosts } from '@/modules/insecure-cert-allowlist';
+import {
+  setInsecureCertAllowedHosts,
+  isInsecureCertAllowlistAvailable,
+} from '@/modules/insecure-cert-allowlist';
 
 /**
  * Pushes every host opted into `allowInsecureCert` to the native TLS
@@ -23,8 +27,18 @@ import { setInsecureCertAllowedHosts } from '@/modules/insecure-cert-allowlist';
  * change before the next connection attempt.
  */
 function syncInsecureCertAllowlist(servers: ServerConfig[]): void {
-  const hosts = servers
-    .filter((s) => s.allowInsecureCert)
+  const wantAllowlist = servers.filter((s) => s.allowInsecureCert);
+  // A server can have this flag set while the native module is absent from
+  // the running binary (OTA JS on a pre-#256 binary — see
+  // modules/insecure-cert-allowlist/index.ts). The toggle silently no-ops in
+  // that case; warn so a connection failure doesn't look unexplained.
+  if (wantAllowlist.length > 0 && !isInsecureCertAllowlistAvailable()) {
+    clogWarn(
+      'CERT',
+      `${wantAllowlist.length} server(s) have "Allow Untrusted, Self-Signed Certificate" enabled, but this build has no native allowlist module — the toggle will not take effect until the app is updated from the App Store.`,
+    );
+  }
+  const hosts = wantAllowlist
     .flatMap((s) => [s.host, s.fallbackHost])
     .filter((h): h is string => !!h);
   setInsecureCertAllowedHosts(hosts);
@@ -116,7 +130,7 @@ export class ServerManager {
 
   /**
    * Build a shareable export of every saved server, with all secrets
-   * (password, proxy Basic Auth password, API key, custom headers) stripped
+   * (password, proxy Basic Auth password, API key, qui proxy key, custom headers) stripped
    * — see utils/server-export.ts.
    */
   static async exportServers(): Promise<ServerExportFile> {
@@ -151,6 +165,7 @@ export class ServerManager {
           password: current.password,
           basicAuthPassword: current.basicAuthPassword,
           apiKey: current.apiKey,
+          quiProxyKey: current.quiProxyKey,
           customHeaders: current.customHeaders,
         });
         updated++;
@@ -227,7 +242,15 @@ export class ServerManager {
     );
     apiClient.setServer(resolved);
 
+    // Errors reaching this file already have any qui proxy key redacted at
+    // the source (services/api/client.ts), so messages here are logged as-is.
     try {
+      // qui Client Proxy (#272): qui's login endpoint is a no-op, so this takes
+      // the same no-login path as API key / bypass auth below — the key in the
+      // request path is the whole credential.
+      if (authMode === 'quiProxy' && !resolved.quiProxyKey) {
+        throw new Error(QUI_KEY_MISSING_MESSAGE);
+      }
       if (authMode !== 'password') {
         try {
           const versionInfo = await applicationApi.getVersion();
@@ -245,6 +268,11 @@ export class ServerManager {
           const axiosErr = error instanceof AxiosError ? error : undefined;
           clogError('CONN', `${authMode} connect failed (${endpoint}): ${message}`);
           if (isNetworkError(error)) {
+            throw error;
+          }
+          if (isQuiKeyRejection(error)) {
+            // A wrong/revoked key — surface qui's own explanation instead of the
+            // generic "check your credentials" (there are no credentials here).
             throw error;
           }
           if (
@@ -327,13 +355,19 @@ export class ServerManager {
   static async disconnect(): Promise<void> {
     const previousServer = apiClient.getServer();
     // API-key auth is stateless and the login/logout endpoints reject Bearer
-    // keys outright, so there's no session to end.
-    if (previousServer && getServerAuthMode(previousServer) !== 'apiKey') {
-      try {
-        await authApi.logout();
-      } catch {
+    // keys outright, so there's no session to end. The same goes for a qui
+    // proxy: qui owns the real qBittorrent session, and its login was a no-op,
+    // so there is nothing for this client to log out of.
+    const previousMode = previousServer ? getServerAuthMode(previousServer) : null;
+    if (previousServer && previousMode !== 'apiKey' && previousMode !== 'quiProxy') {
+      // Best-effort logout — fire it, but don't await it. Against an
+      // unreachable server this used to make disconnect() wait out the
+      // logout POST's own timeout before returning; abortInFlight() below
+      // cancels it immediately instead (#254). Errors (including the
+      // cancellation itself) are ignored either way — logout is best-effort.
+      authApi.logout().catch(() => {
         // Ignore logout errors
-      }
+      });
     }
     clogInfo(
       'CONN',
@@ -341,6 +375,10 @@ export class ServerManager {
         ? `Disconnecting from ${previousServer.host}:${previousServer.port || 'default'} (user requested)`
         : 'Disconnect requested (no server was connected)',
     );
+    // Cancel the logout above plus any other in-flight requests (e.g. the
+    // torrent/transfer polls) so disconnect returns promptly and nothing
+    // lands after the fact (#254).
+    apiClient.abortInFlight();
     apiClient.setServer(null);
     // Keep currentServerId so Settings can offer one-tap reconnect to the
     // last server, and so auto-connect-last-server still has a target — but
@@ -424,6 +462,10 @@ export class ServerManager {
       apiClient.setServer(resolved);
 
       try {
+        if (getServerAuthMode(resolved) === 'quiProxy' && !resolved.quiProxyKey) {
+          return { success: false, error: QUI_KEY_MISSING_MESSAGE };
+        }
+
         if (getServerAuthMode(resolved) === 'password') {
           const loginResult = await authApi.login(resolved.username, resolved.password, signal);
           if (loginResult.status !== 'Ok') {
@@ -459,6 +501,11 @@ export class ServerManager {
           message.includes('cancel')
         ) {
           throw error;
+        }
+
+        if (isQuiKeyRejection(error)) {
+          clogWarn('CONN', 'testEndpoint failed: qui rejected the proxy key');
+          return { success: false, error: message };
         }
 
         if (

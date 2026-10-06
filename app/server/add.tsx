@@ -34,6 +34,7 @@ import { SettingRow } from '@/components/SettingRow';
 import { OptionPicker, OptionPickerItem } from '@/components/OptionPicker';
 import { ServerAppearanceSection } from '@/components/ServerAppearanceSection';
 import { CustomHeadersSection } from '@/components/CustomHeadersSection';
+import { QuiProxyUrlField } from '@/components/QuiProxyUrlField';
 import { spacing, borderRadius } from '@/constants/spacing';
 import { shadows } from '@/constants/shadows';
 import * as Clipboard from 'expo-clipboard';
@@ -41,11 +42,13 @@ import { APP_VERSION } from '@/utils/version';
 import { getErrorMessage } from '@/utils/error';
 import { ServerAuthMode, applyServerAuthMode } from '@/utils/authMode';
 import { withAlpha } from '@/utils/color';
+import { parseQuiProxyUrl, redactQuiProxyKey, withQuiProxyPath } from '@/utils/quiProxy';
 import {
   CustomHeaderPair,
   sanitizeCustomHeaders,
   validateCustomHeaders,
 } from '@/utils/customHeaders';
+import { isInsecureCertAllowlistAvailable } from '@/modules/insecure-cert-allowlist';
 
 export default function AddServerScreen() {
   const router = useRouter();
@@ -62,6 +65,8 @@ export default function AddServerScreen() {
   const [password, setPassword] = useState('');
   const [authMode, setAuthMode] = useState<ServerAuthMode>('password');
   const [apiKey, setApiKey] = useState('');
+  const [quiProxyUrl, setQuiProxyUrl] = useState('');
+  const [fallbackQuiProxyUrl, setFallbackQuiProxyUrl] = useState('');
   const [showAuthMethodPicker, setShowAuthMethodPicker] = useState(false);
   const [useHttps, setUseHttps] = useState(false);
   const [allowInsecureCert, setAllowInsecureCert] = useState(false);
@@ -85,8 +90,28 @@ export default function AddServerScreen() {
     { label: t('server.authMethodPassword'), value: 'password', icon: 'person-outline' },
     { label: t('server.authMethodApiKey'), value: 'apiKey', icon: 'key-outline' },
     { label: t('server.authMethodNone'), value: 'none', icon: 'lock-open-outline' },
+    { label: t('server.authMethodQuiProxy'), value: 'quiProxy', icon: 'git-network-outline' },
   ];
   const authMethodLabel = authMethodOptions.find((opt) => opt.value === authMode)?.label || '';
+
+  // qui Proxy mode (#272): host/port/HTTPS/base path all come from one pasted
+  // proxy URL (…/proxy/<key>) instead of the separate address fields.
+  const isQui = authMode === 'quiProxy';
+  const quiParsed = useMemo(
+    () => (isQui ? parseQuiProxyUrl(quiProxyUrl) : null),
+    [isQui, quiProxyUrl],
+  );
+  const quiEndpoint = quiParsed && quiParsed.ok ? quiParsed : null;
+  // The fallback is a second qui URL for the same instance. Only its
+  // host/port/HTTPS/base path are used — the primary URL's key is reused
+  // (a qui instance has one Client API key per client, however you reach it),
+  // which avoids a second stored secret.
+  const fallbackQuiParsed = useMemo(
+    () => (isQui && useFallback ? parseQuiProxyUrl(fallbackQuiProxyUrl) : null),
+    [isQui, useFallback, fallbackQuiProxyUrl],
+  );
+  const fallbackQuiEndpoint = fallbackQuiParsed && fallbackQuiParsed.ok ? fallbackQuiParsed : null;
+  const effectiveUseHttps = quiEndpoint ? quiEndpoint.useHttps : useHttps;
 
   // Helper function to strip http:// or https:// prefix and trailing colons/slashes from host
   const stripProtocol = (hostString: string): string => {
@@ -95,15 +120,20 @@ export default function AddServerScreen() {
 
   // Computed debug info for troubleshooting
   const debugInfo = useMemo(() => {
-    const originalHost = host.trim();
+    // In qui mode the address comes from the parsed proxy URL; the key is masked
+    // here because this block is copied to the clipboard and pasted into issues.
+    const originalHost = quiEndpoint ? quiEndpoint.host : host.trim();
     const hadProtocol = /^https?:\/\//i.test(originalHost);
     const strippedProtocol = hadProtocol ? originalHost.match(/^(https?:\/\/)/i)?.[0] : null;
     const cleanHost = stripProtocol(originalHost);
 
-    const protocol = useHttps ? 'https' : 'http';
-    const portNum = port.trim() ? parseInt(port, 10) : undefined;
+    const protocol = effectiveUseHttps ? 'https' : 'http';
+    const portNum = quiEndpoint ? quiEndpoint.port : port.trim() ? parseInt(port, 10) : undefined;
     const portPart = portNum && portNum > 0 ? `:${portNum}` : '';
-    const baseUrl = `${protocol}://${cleanHost}${portPart}`;
+    const proxyPath = quiEndpoint
+      ? redactQuiProxyKey(withQuiProxyPath(quiEndpoint.basePath, quiEndpoint.key))
+      : '';
+    const baseUrl = `${protocol}://${cleanHost}${portPart}${proxyPath}`;
 
     // Detect issues
     const warnings: Array<{ type: 'error' | 'warning' | 'info'; message: string }> = [];
@@ -157,7 +187,7 @@ export default function AddServerScreen() {
 
     // HTTPS on private IP
     const isPrivateIP = /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/.test(cleanHost);
-    if (useHttps && isPrivateIP) {
+    if (effectiveUseHttps && isPrivateIP) {
       warnings.push({
         type: 'warning',
         message: 'HTTPS on local IP may fail without a valid certificate.',
@@ -172,6 +202,11 @@ export default function AddServerScreen() {
       });
     } else if (authMode === 'apiKey' && !apiKey.trim()) {
       warnings.push({ type: 'error', message: 'API key required.' });
+    } else if (isQui && !quiEndpoint) {
+      warnings.push({
+        type: 'error',
+        message: 'Valid qui proxy URL required (http(s)://host[:port]/proxy/<key>).',
+      });
     }
 
     return {
@@ -194,7 +229,19 @@ export default function AddServerScreen() {
       hasErrors: warnings.some((w) => w.type === 'error'),
       hasWarnings: warnings.some((w) => w.type === 'warning'),
     };
-  }, [host, port, useHttps, authMode, username, password, apiKey, useCustomHeaders, customHeaders]);
+  }, [
+    host,
+    port,
+    effectiveUseHttps,
+    authMode,
+    isQui,
+    quiEndpoint,
+    username,
+    password,
+    apiKey,
+    useCustomHeaders,
+    customHeaders,
+  ]);
 
   // Copy debug info to clipboard
   const copyDebugInfo = async () => {
@@ -203,7 +250,7 @@ Full URL: ${debugInfo.baseUrl}
 Protocol: ${debugInfo.protocol}://
 Host: ${debugInfo.cleanHost || '(empty)'}
 Port: ${debugInfo.portNum || 'default (80/443)'}
-HTTPS: ${useHttps ? 'Yes' : 'No'}
+HTTPS: ${effectiveUseHttps ? 'Yes' : 'No'}
 Auth Method: ${authMode}
 Custom Headers: ${debugInfo.customHeaderNames.length > 0 ? debugInfo.customHeaderNames.join(', ') + ' (values hidden)' : 'None'}
 
@@ -231,8 +278,13 @@ App Version: ${APP_VERSION}`;
   };
 
   const handleSave = async () => {
-    if (!name.trim() || !host.trim()) {
+    if (!name.trim() || (!isQui && !host.trim())) {
       showToast(t('errors.fillNameAndHost'), 'error');
+      return;
+    }
+
+    if (isQui && !quiEndpoint) {
+      showToast(t('errors.invalidQuiProxyUrl'), 'error');
       return;
     }
 
@@ -266,14 +318,19 @@ App Version: ${APP_VERSION}`;
       }
     }
 
-    const portNum = port.trim() ? parseInt(port, 10) : undefined;
-    if (portNum !== undefined && (isNaN(portNum) || portNum < 1 || portNum > 65535)) {
+    const portNum = quiEndpoint ? quiEndpoint.port : port.trim() ? parseInt(port, 10) : undefined;
+    if (!isQui && portNum !== undefined && (isNaN(portNum) || portNum < 1 || portNum > 65535)) {
       showToast(t('errors.validPort'), 'error');
       return;
     }
 
     const fallbackPortNum = fallbackPort.trim() ? parseInt(fallbackPort, 10) : undefined;
-    if (useFallback) {
+    if (useFallback && isQui) {
+      if (!fallbackQuiEndpoint) {
+        showToast(t('errors.invalidQuiFallbackUrl'), 'error');
+        return;
+      }
+    } else if (useFallback) {
       if (!fallbackHost.trim()) {
         showToast(t('errors.fillFallbackHost'), 'error');
         return;
@@ -298,21 +355,39 @@ App Version: ${APP_VERSION}`;
       const server: ServerConfig = {
         id: Date.now().toString(),
         name: name.trim(),
-        host: stripProtocol(host.trim()),
+        host: quiEndpoint ? quiEndpoint.host : stripProtocol(host.trim()),
         port: portNum,
-        basePath: '/',
-        ...applyServerAuthMode(authMode, { username, password, apiKey }),
-        useHttps,
-        allowInsecureCert: useHttps ? allowInsecureCert : false,
+        basePath: quiEndpoint ? quiEndpoint.basePath : '/',
+        ...applyServerAuthMode(authMode, {
+          username,
+          password,
+          apiKey,
+          quiProxyKey: quiEndpoint?.key ?? '',
+        }),
+        useHttps: effectiveUseHttps,
+        allowInsecureCert: effectiveUseHttps ? allowInsecureCert : false,
         useBasicAuth: useProxyBasicAuth,
         basicAuthUsername: useProxyBasicAuth ? basicAuthUsername.trim() : '',
         basicAuthPassword: useProxyBasicAuth ? basicAuthPassword : '',
         useCustomHeaders,
         customHeaders: useCustomHeaders ? sanitizeCustomHeaders(customHeaders) : [],
         useFallback,
-        fallbackHost: useFallback ? stripProtocol(fallbackHost.trim()) : '',
-        fallbackPort: useFallback ? fallbackPortNum : undefined,
-        fallbackUseHttps: useFallback ? fallbackUseHttps : false,
+        fallbackHost: useFallback
+          ? fallbackQuiEndpoint
+            ? fallbackQuiEndpoint.host
+            : stripProtocol(fallbackHost.trim())
+          : '',
+        fallbackPort: useFallback
+          ? fallbackQuiEndpoint
+            ? fallbackQuiEndpoint.port
+            : fallbackPortNum
+          : undefined,
+        fallbackUseHttps: useFallback
+          ? fallbackQuiEndpoint
+            ? fallbackQuiEndpoint.useHttps
+            : fallbackUseHttps
+          : false,
+        fallbackBasePath: fallbackQuiEndpoint ? fallbackQuiEndpoint.basePath : undefined,
         icon: icon || undefined,
         iconColor: iconColor || undefined,
       };
@@ -344,8 +419,13 @@ App Version: ${APP_VERSION}`;
   };
 
   const handleTest = async () => {
-    if (!name.trim() || !host.trim()) {
+    if (!name.trim() || (!isQui && !host.trim())) {
       showToast(t('errors.fillNameAndHost'), 'error');
+      return;
+    }
+
+    if (isQui && !quiEndpoint) {
+      showToast(t('errors.invalidQuiProxyUrl'), 'error');
       return;
     }
 
@@ -379,14 +459,19 @@ App Version: ${APP_VERSION}`;
       }
     }
 
-    const portNum = port.trim() ? parseInt(port, 10) : undefined;
-    if (portNum !== undefined && (isNaN(portNum) || portNum < 1 || portNum > 65535)) {
+    const portNum = quiEndpoint ? quiEndpoint.port : port.trim() ? parseInt(port, 10) : undefined;
+    if (!isQui && portNum !== undefined && (isNaN(portNum) || portNum < 1 || portNum > 65535)) {
       showToast(t('errors.validPort'), 'error');
       return;
     }
 
     const fallbackPortNum = fallbackPort.trim() ? parseInt(fallbackPort, 10) : undefined;
-    if (useFallback) {
+    if (useFallback && isQui) {
+      if (!fallbackQuiEndpoint) {
+        showToast(t('errors.invalidQuiFallbackUrl'), 'error');
+        return;
+      }
+    } else if (useFallback) {
       if (!fallbackHost.trim()) {
         showToast(t('errors.fillFallbackHost'), 'error');
         return;
@@ -408,20 +493,39 @@ App Version: ${APP_VERSION}`;
       const server: ServerConfig = {
         id: 'test-' + Date.now().toString(),
         name: name.trim(),
-        host: stripProtocol(host.trim()),
+        host: quiEndpoint ? quiEndpoint.host : stripProtocol(host.trim()),
         port: portNum,
-        ...applyServerAuthMode(authMode, { username, password, apiKey }),
-        useHttps,
-        allowInsecureCert: useHttps ? allowInsecureCert : false,
+        basePath: quiEndpoint ? quiEndpoint.basePath : '/',
+        ...applyServerAuthMode(authMode, {
+          username,
+          password,
+          apiKey,
+          quiProxyKey: quiEndpoint?.key ?? '',
+        }),
+        useHttps: effectiveUseHttps,
+        allowInsecureCert: effectiveUseHttps ? allowInsecureCert : false,
         useBasicAuth: useProxyBasicAuth,
         basicAuthUsername: useProxyBasicAuth ? basicAuthUsername.trim() : '',
         basicAuthPassword: useProxyBasicAuth ? basicAuthPassword : '',
         useCustomHeaders,
         customHeaders: useCustomHeaders ? sanitizeCustomHeaders(customHeaders) : [],
         useFallback,
-        fallbackHost: useFallback ? stripProtocol(fallbackHost.trim()) : '',
-        fallbackPort: useFallback ? fallbackPortNum : undefined,
-        fallbackUseHttps: useFallback ? fallbackUseHttps : false,
+        fallbackHost: useFallback
+          ? fallbackQuiEndpoint
+            ? fallbackQuiEndpoint.host
+            : stripProtocol(fallbackHost.trim())
+          : '',
+        fallbackPort: useFallback
+          ? fallbackQuiEndpoint
+            ? fallbackQuiEndpoint.port
+            : fallbackPortNum
+          : undefined,
+        fallbackUseHttps: useFallback
+          ? fallbackQuiEndpoint
+            ? fallbackQuiEndpoint.useHttps
+            : fallbackUseHttps
+          : false,
+        fallbackBasePath: fallbackQuiEndpoint ? fallbackQuiEndpoint.basePath : undefined,
       };
 
       const result = await ServerManager.testConnection(server, testAbortController.current.signal);
@@ -529,66 +633,70 @@ App Version: ${APP_VERSION}`;
                   autoCapitalize="none"
                 />
               </View>
-              <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
-              <View style={styles.inputRow}>
-                <Ionicons
-                  name="globe-outline"
-                  size={20}
-                  color={colors.primary}
-                  style={styles.inputIcon}
-                />
-                <TextInput
-                  style={[styles.input, { color: colors.text }]}
-                  value={host}
-                  onChangeText={setHost}
-                  placeholder={t('placeholders.ipDomain')}
-                  placeholderTextColor={colors.textSecondary}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardType="default"
-                />
-                <TouchableOpacity
-                  onPress={() => setShowHostTooltip(true)}
-                  style={styles.infoButton}
-                  accessibilityLabel={t('common.moreInfo')}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <Ionicons
-                    name="information-circle-outline"
-                    size={20}
-                    color={colors.textSecondary}
-                  />
-                </TouchableOpacity>
-              </View>
-              <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
-              <View style={styles.inputRow}>
-                <Ionicons
-                  name="link-outline"
-                  size={20}
-                  color={colors.primary}
-                  style={styles.inputIcon}
-                />
-                <TextInput
-                  style={[styles.input, { color: colors.text }]}
-                  value={port}
-                  onChangeText={setPort}
-                  placeholder={t('placeholders.portOptional')}
-                  placeholderTextColor={colors.textSecondary}
-                  keyboardType="numeric"
-                />
-                <TouchableOpacity
-                  onPress={() => setShowPortTooltip(true)}
-                  style={styles.infoButton}
-                  accessibilityLabel={t('common.moreInfo')}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <Ionicons
-                    name="information-circle-outline"
-                    size={20}
-                    color={colors.textSecondary}
-                  />
-                </TouchableOpacity>
-              </View>
+              {!isQui && (
+                <>
+                  <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
+                  <View style={styles.inputRow}>
+                    <Ionicons
+                      name="globe-outline"
+                      size={20}
+                      color={colors.primary}
+                      style={styles.inputIcon}
+                    />
+                    <TextInput
+                      style={[styles.input, { color: colors.text }]}
+                      value={host}
+                      onChangeText={setHost}
+                      placeholder={t('placeholders.ipDomain')}
+                      placeholderTextColor={colors.textSecondary}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      keyboardType="default"
+                    />
+                    <TouchableOpacity
+                      onPress={() => setShowHostTooltip(true)}
+                      style={styles.infoButton}
+                      accessibilityLabel={t('common.moreInfo')}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons
+                        name="information-circle-outline"
+                        size={20}
+                        color={colors.textSecondary}
+                      />
+                    </TouchableOpacity>
+                  </View>
+                  <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
+                  <View style={styles.inputRow}>
+                    <Ionicons
+                      name="link-outline"
+                      size={20}
+                      color={colors.primary}
+                      style={styles.inputIcon}
+                    />
+                    <TextInput
+                      style={[styles.input, { color: colors.text }]}
+                      value={port}
+                      onChangeText={setPort}
+                      placeholder={t('placeholders.portOptional')}
+                      placeholderTextColor={colors.textSecondary}
+                      keyboardType="numeric"
+                    />
+                    <TouchableOpacity
+                      onPress={() => setShowPortTooltip(true)}
+                      style={styles.infoButton}
+                      accessibilityLabel={t('common.moreInfo')}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons
+                        name="information-circle-outline"
+                        size={20}
+                        color={colors.textSecondary}
+                      />
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
             </View>
           </View>
 
@@ -617,7 +725,14 @@ App Version: ${APP_VERSION}`;
                   thumbColor="#FFFFFF"
                 />
               </SettingRow>
-              {useFallback && (
+              {useFallback && isQui && (
+                <QuiProxyUrlField
+                  value={fallbackQuiProxyUrl}
+                  onChangeText={setFallbackQuiProxyUrl}
+                  hint={t('server.quiProxyFallbackHint')}
+                />
+              )}
+              {useFallback && !isQui && (
                 <>
                   <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
                   <View style={styles.inputRow}>
@@ -775,45 +890,61 @@ App Version: ${APP_VERSION}`;
                   </Text>
                 </>
               )}
-            </View>
-          </View>
-
-          {/* Security Section */}
-          <View style={styles.section}>
-            <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
-              {t('server.security')}
-            </Text>
-            <View style={[styles.card, { backgroundColor: colors.surface }]}>
-              <SettingRow icon="shield-checkmark-outline" label={t('server.useHttps')}>
-                <Switch
-                  value={useHttps}
-                  onValueChange={setUseHttps}
-                  trackColor={{ false: colors.surfaceOutline, true: colors.primary }}
-                  thumbColor="#FFFFFF"
-                />
-              </SettingRow>
-              {useHttps && (
-                <>
-                  <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
-                  <SettingRow
-                    icon="warning-outline"
-                    iconColor={colors.warning}
-                    label={t('server.allowInsecureCert')}
-                  >
-                    <Switch
-                      value={allowInsecureCert}
-                      onValueChange={setAllowInsecureCert}
-                      trackColor={{ false: colors.surfaceOutline, true: colors.warning }}
-                      thumbColor="#FFFFFF"
-                    />
-                  </SettingRow>
-                  <Text style={[styles.hintText, { color: colors.textSecondary }]}>
-                    {t('server.allowInsecureCertHint')}
-                  </Text>
-                </>
+              {authMode === 'quiProxy' && (
+                <QuiProxyUrlField value={quiProxyUrl} onChangeText={setQuiProxyUrl} />
               )}
             </View>
           </View>
+
+          {/* Security Section — in qui mode the scheme comes from the proxy URL, so only the cert opt-in remains */}
+          {(!isQui || effectiveUseHttps) && (
+            <View style={styles.section}>
+              <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
+                {t('server.security')}
+              </Text>
+              <View style={[styles.card, { backgroundColor: colors.surface }]}>
+                {!isQui && (
+                  <SettingRow icon="shield-checkmark-outline" label={t('server.useHttps')}>
+                    <Switch
+                      value={useHttps}
+                      onValueChange={setUseHttps}
+                      trackColor={{ false: colors.surfaceOutline, true: colors.primary }}
+                      thumbColor="#FFFFFF"
+                    />
+                  </SettingRow>
+                )}
+                {effectiveUseHttps && (
+                  <>
+                    {!isQui && (
+                      <View
+                        style={[styles.separator, { backgroundColor: colors.surfaceOutline }]}
+                      />
+                    )}
+                    <SettingRow
+                      icon="warning-outline"
+                      iconColor={colors.warning}
+                      label={t('server.allowInsecureCert')}
+                    >
+                      <Switch
+                        value={allowInsecureCert}
+                        onValueChange={setAllowInsecureCert}
+                        trackColor={{ false: colors.surfaceOutline, true: colors.warning }}
+                        thumbColor="#FFFFFF"
+                      />
+                    </SettingRow>
+                    <Text style={[styles.hintText, { color: colors.textSecondary }]}>
+                      {t('server.allowInsecureCertHint')}
+                    </Text>
+                    {!isInsecureCertAllowlistAvailable() && (
+                      <Text style={[styles.hintText, { color: colors.warning }]}>
+                        {t('server.allowInsecureCertUnavailable')}
+                      </Text>
+                    )}
+                  </>
+                )}
+              </View>
+            </View>
+          )}
 
           {/* Proxy Authentication Section */}
           <View style={styles.section}>
@@ -1079,9 +1210,13 @@ App Version: ${APP_VERSION}`;
 
               {/* Network Diagnostics - part of debug mode */}
               <SuperDebugPanel
-                host={host}
-                port={port}
-                useHttps={useHttps}
+                host={quiEndpoint ? quiEndpoint.host : host}
+                port={quiEndpoint ? (quiEndpoint.port ? String(quiEndpoint.port) : '') : port}
+                useHttps={effectiveUseHttps}
+                basePath={
+                  quiEndpoint ? withQuiProxyPath(quiEndpoint.basePath, quiEndpoint.key) : undefined
+                }
+                useQuiProxy={isQui}
                 username={username}
                 password={password}
                 bypassAuth={authMode === 'none'}

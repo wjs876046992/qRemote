@@ -1643,7 +1643,7 @@ export default function TorrentDetail() {
                   {
                     key: 'eta',
                     label: t('torrentDetail.eta'),
-                    value: hasEta(torrent.eta, torrent.progress) ? formatTime(torrent.eta) : '—',
+                    value: hasEta(torrent.eta, torrent.state) ? formatTime(torrent.eta) : '—',
                   },
                   {
                     key: 'ratio',

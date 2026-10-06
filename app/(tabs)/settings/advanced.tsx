@@ -20,6 +20,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { useServer } from '@/context/ServerContext';
 import { useToast } from '@/context/ToastContext';
 import { FocusAwareStatusBar } from '@/components/FocusAwareStatusBar';
+import { LogViewer } from '@/components/LogViewer';
 import { storageService } from '@/services/storage';
 import { apiClient } from '@/services/api/client';
 import { applicationApi } from '@/services/api/application';
@@ -45,6 +46,7 @@ export default function AdvancedSettingsScreen() {
   const [retryAttempts, setRetryAttempts] = useState<number>(3);
   const [debugMode, setDebugMode] = useState(false);
   const [connectionTimeout, setConnectionTimeout] = useState<number>(10000);
+  const [connectivityLogVisible, setConnectivityLogVisible] = useState(false);
 
   const loadPreferences = async () => {
     try {
@@ -83,7 +85,7 @@ export default function AdvancedSettingsScreen() {
       const exportData = {
         preferences: prefs,
         // Shared with Settings → Servers → Export: strips password,
-        // basicAuthPassword, and apiKey (re-enter after import) and keeps
+        // basicAuthPassword, apiKey, and quiProxyKey (re-enter after import) and keeps
         // everything else, including the fallback-endpoint fields the old
         // hand-rolled field list silently dropped.
         servers: servers.map(toExportedServer),
@@ -150,6 +152,7 @@ export default function AdvancedSettingsScreen() {
             password: '',
             basicAuthPassword: '',
             apiKey: '',
+            quiProxyKey: '',
             // Imports never carry secrets — same rule as utils/server-export.ts.
             customHeaders: [],
           });
@@ -352,13 +355,27 @@ export default function AdvancedSettingsScreen() {
               <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
               <TouchableOpacity
                 style={styles.settingRow}
+                onPress={() => setConnectivityLogVisible(true)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.settingLeft}>
+                  <Ionicons name="pulse-outline" size={22} color={colors.primary} />
+                  <Text style={[styles.settingLabel, { color: colors.text }]}>
+                    {t('screens.settings.viewConnectivityLogs')}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+              <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
+              <TouchableOpacity
+                style={styles.settingRow}
                 onPress={() => router.dismissTo('/(tabs)/logs')}
                 activeOpacity={0.7}
               >
                 <View style={styles.settingLeft}>
                   <Ionicons name="document-text-outline" size={22} color={colors.primary} />
                   <Text style={[styles.settingLabel, { color: colors.text }]}>
-                    {t('screens.settings.viewLogs')}
+                    {t('screens.settings.viewServerLogs')}
                   </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
@@ -422,6 +439,10 @@ export default function AdvancedSettingsScreen() {
           <View style={{ height: 40 }} />
         </ScrollView>
       </View>
+      <LogViewer
+        visible={connectivityLogVisible}
+        onClose={() => setConnectivityLogVisible(false)}
+      />
     </>
   );
 }

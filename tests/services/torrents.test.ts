@@ -3,6 +3,7 @@ jest.mock('@/services/api/client', () => ({
     get: jest.fn(),
     post: jest.fn(),
     postUrlEncoded: jest.fn(),
+    postUrlEncodedWithStatus: jest.fn(),
     postFormData: jest.fn(),
     getApiFeatures: jest.fn(() => ({ useStartStopEndpoints: false })),
   },
@@ -19,6 +20,7 @@ import { apiClient } from '@/services/api/client';
 
 const mockGet = apiClient.get as jest.Mock;
 const mockPost = apiClient.postUrlEncoded as jest.Mock;
+const mockPostWithStatus = apiClient.postUrlEncodedWithStatus as jest.Mock;
 const mockPostFormData = apiClient.postFormData as jest.Mock;
 const mockGetApiFeatures = apiClient.getApiFeatures as jest.Mock;
 
@@ -347,6 +349,93 @@ describe('torrentsApi', () => {
     expect(mockPost).toHaveBeenCalledWith('/api/v2/torrents/addTrackers', {
       hash: 'h1',
       urls: 'url1\nurl2',
+    });
+  });
+
+  describe('fetchMetadata (#267)', () => {
+    it('reports a 202 as pending and sends the source pre-encoded', async () => {
+      mockPostWithStatus.mockResolvedValueOnce({ data: {}, status: 202 });
+      const result = await torrentsApi.fetchMetadata('https://idx.example/dl?id=1&k=a%2Fb');
+      expect(result).toEqual({
+        status: 'pending',
+        infohashV1: undefined,
+        infohashV2: undefined,
+        hash: undefined,
+      });
+      expect(mockPostWithStatus).toHaveBeenCalledWith(
+        '/api/v2/torrents/fetchMetadata',
+        { source: encodeURIComponent('https://idx.example/dl?id=1&k=a%2Fb') },
+        undefined,
+      );
+    });
+
+    it('only sends "downloader" when one is given, and forwards the abort signal', async () => {
+      mockPostWithStatus.mockResolvedValue({ data: {}, status: 202 });
+      const controller = new AbortController();
+      await torrentsApi.fetchMetadata('https://x/a.torrent', 'jackett', controller.signal);
+      expect(mockPostWithStatus).toHaveBeenLastCalledWith(
+        '/api/v2/torrents/fetchMetadata',
+        { source: encodeURIComponent('https://x/a.torrent'), downloader: 'jackett' },
+        controller.signal,
+      );
+      await torrentsApi.fetchMetadata('https://x/a.torrent', '');
+      const params = mockPostWithStatus.mock.calls[1][1];
+      expect(params).not.toHaveProperty('downloader');
+    });
+
+    it('reads the hashes off a 202 for a magnet whose metadata is still downloading', async () => {
+      mockPostWithStatus.mockResolvedValueOnce({
+        data: { hash: 'abc', infohash_v1: 'abc', infohash_v2: '' },
+        status: 202,
+      });
+      expect(await torrentsApi.fetchMetadata('magnet:?xt=urn:btih:abc')).toEqual({
+        status: 'pending',
+        infohashV1: 'abc',
+        infohashV2: undefined,
+        hash: 'abc',
+      });
+    });
+
+    it('returns hashes and de-duplicated tracker URLs once ready (trackers are {url,tier} objects)', async () => {
+      mockPostWithStatus.mockResolvedValueOnce({
+        data: {
+          hash: 'a'.repeat(40),
+          infohash_v1: 'a'.repeat(40),
+          infohash_v2: '',
+          info: { name: 'x' },
+          trackers: [
+            { url: 'udp://t1:80', tier: 0 },
+            { url: 'udp://t2:80', tier: 1 },
+            { url: 'udp://t1:80', tier: 2 },
+            { url: '  ', tier: 3 },
+            null,
+          ],
+        },
+        status: 200,
+      });
+      expect(await torrentsApi.fetchMetadata('https://x/a.torrent')).toEqual({
+        status: 'ready',
+        infohashV1: 'a'.repeat(40),
+        infohashV2: undefined,
+        hash: 'a'.repeat(40),
+        trackers: ['udp://t1:80', 'udp://t2:80'],
+      });
+    });
+
+    it('treats a ready response without a tracker list as having no trackers', async () => {
+      mockPostWithStatus.mockResolvedValueOnce({
+        data: { infohash_v1: 'b'.repeat(40) },
+        status: 200,
+      });
+      const result = await torrentsApi.fetchMetadata('https://x/b.torrent');
+      expect(result).toMatchObject({ status: 'ready', trackers: [] });
+    });
+
+    it('propagates errors (e.g. "not a valid torrent file")', async () => {
+      mockPostWithStatus.mockRejectedValueOnce(new Error("'x' is not a valid torrent file."));
+      await expect(torrentsApi.fetchMetadata('https://x/c.torrent')).rejects.toThrow(
+        'not a valid torrent',
+      );
     });
   });
 

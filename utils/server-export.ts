@@ -2,7 +2,7 @@
  * server-export.ts — Pure build/parse logic for the server-list export file
  * (Settings → Servers → Export/Import Servers).
  *
- * Secrets (`password`, `basicAuthPassword`, `apiKey`, `customHeaders`) are
+ * Secrets (`password`, `basicAuthPassword`, `apiKey`, `quiProxyKey`, `customHeaders`) are
  * NEVER written to an export and are forced empty on import regardless of
  * what a file contains —
  * the same rule `services/storage.ts` applies before anything reaches
@@ -61,6 +61,8 @@ export function toExportedServer(server: ServerConfig): ServerConfig {
     basicAuthPassword: '',
     useApiKey: server.useApiKey === true,
     apiKey: '',
+    useQuiProxy: server.useQuiProxy === true,
+    quiProxyKey: '',
     useCustomHeaders: server.useCustomHeaders === true,
     customHeaders: [],
     icon: optionalString(server.icon),

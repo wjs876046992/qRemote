@@ -28,6 +28,8 @@ function makeServer(overrides: Partial<ServerConfig> = {}): ServerConfig {
     basicAuthPassword: 'proxy-secret',
     useApiKey: false,
     apiKey: 'key-secret',
+    useQuiProxy: false,
+    quiProxyKey: 'qui-key-secret',
     useCustomHeaders: true,
     customHeaders: [{ key: 'X-Pangolin-Token', value: 'header-secret' }],
     ...overrides,
@@ -40,7 +42,28 @@ describe('toExportedServer', () => {
     expect(exported.password).toBe('');
     expect(exported.basicAuthPassword).toBe('');
     expect(exported.apiKey).toBe('');
+    expect(exported.quiProxyKey).toBe('');
     expect(exported.customHeaders).toEqual([]);
+  });
+
+  it('keeps the qui proxy flag and its address/base path, but never the key (#272)', () => {
+    const exported = toExportedServer(
+      makeServer({ useQuiProxy: true, basePath: '/qui', quiProxyKey: 'qui-key-secret' }),
+    );
+    expect(exported.useQuiProxy).toBe(true);
+    expect(exported.basePath).toBe('/qui');
+    expect(exported.host).toBe('nas.local');
+    expect(exported.quiProxyKey).toBe('');
+    expect(JSON.stringify(exported)).not.toContain('qui-key-secret');
+  });
+
+  it('handles a legacy config with no qui fields', () => {
+    const legacy = makeServer();
+    delete legacy.useQuiProxy;
+    delete legacy.quiProxyKey;
+    const exported = toExportedServer(legacy);
+    expect(exported.useQuiProxy).toBe(false);
+    expect(exported.quiProxyKey).toBe('');
   });
 
   it('keeps the useCustomHeaders flag, which is not a secret', () => {
@@ -108,6 +131,7 @@ describe('buildServerExport', () => {
     expect(json).not.toContain('super-secret');
     expect(json).not.toContain('proxy-secret');
     expect(json).not.toContain('key-secret');
+    expect(json).not.toContain('qui-key-secret');
     expect(json).not.toContain('header-secret');
   });
 });
@@ -187,6 +211,8 @@ describe('parseServerImport', () => {
           password: 'injected',
           basicAuthPassword: 'injected',
           apiKey: 'injected',
+          useQuiProxy: true,
+          quiProxyKey: 'injected',
           customHeaders: [{ key: 'X-Injected', value: 'injected' }],
         },
       ],
@@ -195,6 +221,9 @@ describe('parseServerImport', () => {
     expect(server.password).toBe('');
     expect(server.basicAuthPassword).toBe('');
     expect(server.apiKey).toBe('');
+    expect(server.quiProxyKey).toBe('');
+    // The flag is not a secret and survives, so the user only has to re-enter the key.
+    expect(server.useQuiProxy).toBe(true);
     expect(server.customHeaders).toEqual([]);
   });
 });

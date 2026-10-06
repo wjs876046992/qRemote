@@ -5,6 +5,7 @@ export const mockApiClient = {
   get: jest.fn(),
   post: jest.fn(),
   postUrlEncoded: jest.fn(),
+  postUrlEncodedWithStatus: jest.fn(),
   postFormData: jest.fn(),
   getApiFeatures: jest.fn(() => ({})),
   getServer: jest.fn(),

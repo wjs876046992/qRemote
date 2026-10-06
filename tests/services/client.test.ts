@@ -49,6 +49,7 @@ class MockAxiosError extends Error {
   code?: string;
   config?: Record<string, unknown>;
   response?: { status?: number; data?: unknown; headers?: Record<string, unknown> };
+  request?: { response?: unknown };
   isAxiosError = true;
   constructor(message?: string) {
     super(message);
@@ -430,6 +431,31 @@ describe('apiClient', () => {
       );
     });
 
+    it('normalizes an ERR_NETWORK carrying a TLS-rejection description to a distinct certificate error (#256)', () => {
+      const err = makeErr({
+        code: 'ERR_NETWORK',
+        request: {
+          response:
+            'The certificate for this server is invalid. You might be connecting to a server that is pretending to be "example.com".',
+        },
+      });
+      expect(() => capturedResponseInterceptorError!(err)).toThrow(
+        'Certificate rejected. Enable "Allow Untrusted, Self-Signed Certificate" for this server if you trust it.',
+      );
+    });
+
+    it('does not mistake an ordinary ERR_NETWORK for a TLS rejection (#256)', () => {
+      const err = makeErr({ code: 'ERR_NETWORK', request: { response: '' } });
+      expect(() => capturedResponseInterceptorError!(err)).toThrow(
+        'Connection timeout. Please check your server connection.',
+      );
+    });
+
+    it('normalizes ERR_CANCELED to a distinct canceled error, not the timeout message (#254)', () => {
+      const err = makeErr({ code: 'ERR_CANCELED' });
+      expect(() => capturedResponseInterceptorError!(err)).toThrow('Request canceled.');
+    });
+
     it('falls through to response data message for unknown status', () => {
       const err = makeErr({ response: { status: 500, data: 'Internal Server Error' } });
       expect(() => capturedResponseInterceptorError!(err)).toThrow('Internal Server Error');
@@ -584,6 +610,26 @@ describe('apiClient', () => {
     });
   });
 
+  describe('postUrlEncodedWithStatus', () => {
+    it('throws when no server is configured', async () => {
+      apiClient.setServer(null);
+      await expect(apiClient.postUrlEncodedWithStatus('/x', { a: 1 })).rejects.toThrow(
+        'No server configured. Please connect to a server first.',
+      );
+    });
+
+    it('returns the body together with the HTTP status (e.g. a 202 "still working")', async () => {
+      apiClient.setServer(makeServer());
+      mockAxiosInstance.post.mockResolvedValueOnce({ data: {}, status: 202 });
+      const result = await apiClient.postUrlEncodedWithStatus('/torrents/fetchMetadata', {
+        source: 'https://x/a.torrent',
+      });
+      expect(result).toEqual({ data: {}, status: 202 });
+      const [, body] = mockAxiosInstance.post.mock.calls[0];
+      expect(body).toBe('source=https%3A%2F%2Fx%2Fa.torrent');
+    });
+  });
+
   describe('get', () => {
     it('throws when no server is configured', async () => {
       apiClient.setServer(null);
@@ -642,6 +688,60 @@ describe('apiClient', () => {
       const result = await apiClient.get('/torrents/info');
       expect(result).toBe('ok');
     });
+
+    it('does not retry a canceled request (ERR_CANCELED falls through isRetriableError) (#254)', async () => {
+      apiClient.setServer(makeServer());
+      apiClient.updateSettings({ retryAttempts: 3 });
+      const canceledErr = new MockAxiosError('canceled');
+      canceledErr.code = 'ERR_CANCELED';
+      mockAxiosInstance.get.mockRejectedValueOnce(canceledErr);
+
+      await expect(apiClient.get('/torrents/info')).rejects.toBe(canceledErr);
+      expect(mockAxiosInstance.get).toHaveBeenCalledTimes(1);
+    });
+
+    describe('retry budget (#254 — connectionTimeout is a total budget, not per-attempt)', () => {
+      it('stops retrying once the deadline (including the pending backoff) would be exceeded, even with retries left', async () => {
+        apiClient.setServer(makeServer());
+        // Budget covers the first 500ms backoff but not the second (1000ms).
+        apiClient.updateSettings({ connectionTimeout: 1200, retryAttempts: 5 });
+        const timeoutErr = new MockAxiosError('timeout of 1200ms exceeded');
+        timeoutErr.code = 'ECONNABORTED';
+        mockAxiosInstance.get.mockRejectedValue(timeoutErr);
+
+        const start = Date.now();
+        await expect(apiClient.get('/torrents/info')).rejects.toBe(timeoutErr);
+        const elapsed = Date.now() - start;
+
+        // Only the first backoff (500ms) should have been slept before the
+        // budget check stops it — not all 5 allowed retries (which would
+        // sleep 500+1000+1500+2000+2500ms if capped only by retryAttempts).
+        expect(mockAxiosInstance.get).toHaveBeenCalledTimes(2);
+        expect(elapsed).toBeLessThan(1000);
+      });
+
+      it('caps each attempt timeout to the remaining budget and never below the floor', async () => {
+        apiClient.setServer(makeServer());
+        apiClient.updateSettings({ connectionTimeout: 3000, retryAttempts: 1 });
+        const timeoutErr = new MockAxiosError('timeout');
+        timeoutErr.code = 'ECONNABORTED';
+        mockAxiosInstance.get
+          .mockRejectedValueOnce(timeoutErr)
+          .mockResolvedValueOnce({ data: 'ok' });
+
+        await apiClient.get('/torrents/info');
+
+        expect(mockAxiosInstance.get).toHaveBeenCalledTimes(2);
+        const firstTimeout = (mockAxiosInstance.get.mock.calls[0][1] as { timeout: number })
+          .timeout;
+        const secondTimeout = (mockAxiosInstance.get.mock.calls[1][1] as { timeout: number })
+          .timeout;
+        // First attempt gets ~the full budget; the second, issued after the
+        // 500ms backoff sleep, gets less — but never below the 1s floor.
+        expect(firstTimeout).toBeGreaterThan(secondTimeout);
+        expect(secondTimeout).toBeGreaterThanOrEqual(1000);
+      });
+    });
   });
 
   describe('post', () => {
@@ -655,6 +755,94 @@ describe('apiClient', () => {
       mockAxiosInstance.post.mockResolvedValueOnce({ data: 'ok' });
       const result = await apiClient.post('/torrents/pause', { hashes: 'all' });
       expect(result).toBe('ok');
+    });
+  });
+
+  describe('abortInFlight (#254 — cancellation so disconnect/switch does not wait out a hung request)', () => {
+    it('aborts the session signal used by an in-flight get() that did not pass its own signal', async () => {
+      apiClient.setServer(makeServer());
+      let resolveGet!: (value: { data: unknown }) => void;
+      mockAxiosInstance.get.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveGet = resolve;
+        }),
+      );
+
+      const pending = apiClient.get('/torrents/info');
+      await Promise.resolve(); // let apiClient.get reach the mocked axios call
+      const passedSignal = (mockAxiosInstance.get.mock.calls[0][1] as { signal: AbortSignal })
+        .signal;
+      expect(passedSignal.aborted).toBe(false);
+
+      apiClient.abortInFlight();
+      expect(passedSignal.aborted).toBe(true);
+
+      resolveGet({ data: 'ok' });
+      await pending;
+    });
+
+    it('does not touch a caller-supplied signal — only the default session signal', async () => {
+      apiClient.setServer(makeServer());
+      const callerController = new AbortController();
+      mockAxiosInstance.get.mockResolvedValueOnce({ data: 'ok' });
+
+      await apiClient.get('/torrents/info', undefined, callerController.signal);
+
+      const passedSignal = (mockAxiosInstance.get.mock.calls[0][1] as { signal: AbortSignal })
+        .signal;
+      expect(passedSignal).toBe(callerController.signal);
+
+      apiClient.abortInFlight();
+      expect(callerController.signal.aborted).toBe(false);
+    });
+
+    it('is used by default in post/postFormData/postUrlEncoded too, and is abortable', async () => {
+      apiClient.setServer(makeServer());
+      mockAxiosInstance.post.mockResolvedValue({ data: 'ok' });
+
+      await apiClient.post('/torrents/pause', { hashes: 'all' });
+      await apiClient.postUrlEncoded('/auth/login', { username: 'a', password: 'b' });
+      await apiClient.postFormData('/torrents/add', new FormData());
+
+      for (const call of mockAxiosInstance.post.mock.calls) {
+        const opts = call[2] as { signal: AbortSignal };
+        expect(opts.signal.aborted).toBe(false);
+      }
+      apiClient.abortInFlight();
+      // Signals captured before abortInFlight() was called are the ones that
+      // were live during those requests, and must now report aborted.
+      for (const call of mockAxiosInstance.post.mock.calls) {
+        const opts = call[2] as { signal: AbortSignal };
+        expect(opts.signal.aborted).toBe(true);
+      }
+    });
+
+    it('setServer() to a different server aborts requests in flight under the old session', async () => {
+      apiClient.setServer(makeServer({ id: 'server-1' }));
+      mockAxiosInstance.get.mockReturnValueOnce(new Promise(() => {})); // never resolves
+      apiClient.get('/torrents/info');
+      await Promise.resolve();
+      const passedSignal = (mockAxiosInstance.get.mock.calls[0][1] as { signal: AbortSignal })
+        .signal;
+      expect(passedSignal.aborted).toBe(false);
+
+      apiClient.setServer(makeServer({ id: 'server-2' }));
+
+      expect(passedSignal.aborted).toBe(true);
+    });
+
+    it('clearCookies() aborts requests in flight under the old session', async () => {
+      apiClient.setServer(makeServer());
+      mockAxiosInstance.get.mockReturnValueOnce(new Promise(() => {})); // never resolves
+      apiClient.get('/torrents/info');
+      await Promise.resolve();
+      const passedSignal = (mockAxiosInstance.get.mock.calls[0][1] as { signal: AbortSignal })
+        .signal;
+      expect(passedSignal.aborted).toBe(false);
+
+      apiClient.clearCookies();
+
+      expect(passedSignal.aborted).toBe(true);
     });
   });
 });

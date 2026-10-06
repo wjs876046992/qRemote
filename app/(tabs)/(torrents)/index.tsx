@@ -55,6 +55,8 @@ import { spacing, borderRadius } from '@/constants/spacing';
 import { buttonStyles, buttonText } from '@/constants/buttons';
 import { typography } from '@/constants/typography';
 import { QuickConnectPanel } from '@/components/QuickConnectPanel';
+import { ServerSwitcherModal } from '@/components/ServerSwitcherModal';
+import { ServerIconBadge } from '@/components/ServerIconBadge';
 import { useTorrentActions } from '@/hooks/useTorrentActions';
 import { useGracefulError } from '@/hooks/useGracefulError';
 import { getErrorMessage } from '@/utils/error';
@@ -81,6 +83,7 @@ export default function TorrentsScreen() {
   } = useTorrents();
   const { graceError, isPendingError } = useGracefulError(error);
   const {
+    currentServer,
     isConnected,
     isLoading: serverIsLoading,
     isConnecting,
@@ -107,6 +110,11 @@ export default function TorrentsScreen() {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedHashes, setSelectedHashes] = useState<Set<string>>(new Set());
   const [bulkLoading, setBulkLoading] = useState(false);
+  // The bulk actions bar is absolutely positioned over the list (see
+  // bulkActionsBar), so without this the last card(s) render underneath it
+  // and are partially hidden. Measured rather than hardcoded since its height
+  // varies with the safe-area inset and Dynamic Type text scaling.
+  const [bulkActionsBarHeight, setBulkActionsBarHeight] = useState(0);
   const [bulkMenuVisible, setBulkMenuVisible] = useState(false);
   const [showBulkCategoryPicker, setShowBulkCategoryPicker] = useState(false);
   // Tag editing works as a draft: toggles accumulate in bulkTagDraft and are
@@ -175,6 +183,12 @@ export default function TorrentsScreen() {
   const headerTranslateY = useRef(new Animated.Value(0)).current;
   const isHeaderVisible = useRef(true);
   const isAnimating = useRef(false);
+  // headerContainer is an absolute overlay (see styles.headerContainer), so
+  // the list's paddingTop must reserve exactly its rendered height or content
+  // either hides underneath it or leaves a gap above the first card. Its
+  // content differs by selectMode (fewer buttons/rows), so this is measured
+  // rather than a fixed constant — matches bulkActionsBarHeight below.
+  const [headerHeight, setHeaderHeight] = useState(136);
 
   // Swipeable refs for closing open rows
   const openSwipeableRef = useRef<Swipeable | null>(null);
@@ -191,9 +205,9 @@ export default function TorrentsScreen() {
   // is focused.
   useFocusEffect(
     useCallback(() => {
-      setToastTopOffset(styles.listContent.paddingTop + spacing.xxl);
+      setToastTopOffset(headerHeight + spacing.xxl);
       return () => setToastTopOffset(null);
-    }, [setToastTopOffset]),
+    }, [setToastTopOffset, headerHeight]),
   );
 
   // Check for filter + card view mode preference changes on screen focus
@@ -715,30 +729,30 @@ export default function TorrentsScreen() {
     },
   ];
 
-  // ─── Server quick-connect state (used in not-connected early return) ────────
+  // ─── Server quick-connect state (not-connected panel + the connected
+  // server switcher, #249 — both list the same saved servers) ────────────────
   const [savedServers, setSavedServers] = useState<ServerConfig[]>([]);
   const [serversLoaded, setServersLoaded] = useState(false);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [connectErrors, setConnectErrors] = useState<Record<string, string>>({});
+  const [showServerSwitcher, setShowServerSwitcher] = useState(false);
 
-  // Refetch on every focus (not just isConnected changes) so an icon/color
-  // edited in Settings while still disconnected shows up when this screen
-  // regains focus, instead of only refreshing on the next connect/disconnect.
+  // Refetch on every focus, connected or not, so an icon/color edited in
+  // Settings shows up here next time this screen regains focus rather than
+  // only on the next connect/disconnect.
   useFocusEffect(
     useCallback(() => {
-      if (!isConnected) {
-        setServersLoaded(false);
-        ServerManager.getServers()
-          .then((s) => {
-            setSavedServers(s);
-            setServersLoaded(true);
-          })
-          .catch(() => {
-            setSavedServers([]);
-            setServersLoaded(true);
-          });
-      }
-    }, [isConnected]),
+      setServersLoaded(false);
+      ServerManager.getServers()
+        .then((s) => {
+          setSavedServers(s);
+          setServersLoaded(true);
+        })
+        .catch(() => {
+          setSavedServers([]);
+          setServersLoaded(true);
+        });
+    }, []),
   );
 
   const handleQuickConnect = useCallback(
@@ -933,9 +947,13 @@ export default function TorrentsScreen() {
     [refresh, showToast, t],
   );
 
-  // Scroll handler — header show/hide only
+  // Scroll handler — header show/hide only. Pinned (never hides) in
+  // selectMode: Select All / Close must stay reachable without scrolling
+  // back up, per #252-adjacent feedback.
   const handleScroll = useCallback(
     (event: { nativeEvent: { contentOffset: { y: number } } }) => {
+      if (selectMode) return;
+
       const currentScrollY = event.nativeEvent.contentOffset.y;
       const scrollDifference = currentScrollY - lastScrollY.current;
 
@@ -987,8 +1005,19 @@ export default function TorrentsScreen() {
 
       lastScrollY.current = currentScrollY;
     },
-    [headerTranslateY],
+    [headerTranslateY, selectMode],
   );
+
+  // Snap the header back to visible when entering selectMode — it may have
+  // been scrolled out of view before selection started, and while selected
+  // it must stay pinned (handleScroll no-ops during selectMode above).
+  useEffect(() => {
+    if (selectMode) {
+      isHeaderVisible.current = true;
+      isAnimating.current = false;
+      headerTranslateY.setValue(0);
+    }
+  }, [selectMode, headerTranslateY]);
 
   // Whether any secondary (category/tag) filter is active
   const hasSecondaryFilter = categoryFilter !== null || tagFilters.length > 0;
@@ -1117,7 +1146,15 @@ export default function TorrentsScreen() {
   // connection (check this FIRST). currentServer intentionally survives a
   // disconnect for one-tap reconnect, so it must NOT gate this screen —
   // otherwise a disconnected app falls through to the empty torrent list.
-  if (!isConnected && !serverIsLoading) {
+  //
+  // `connectingId !== null` keeps this panel mounted through a user-initiated
+  // tap (#252): the moment handleQuickConnect fires, connectMutation goes
+  // pending and serverIsLoading flips true, which would otherwise fall through
+  // to the skeleton branch below and unmount the panel mid-tap — panel →
+  // skeleton → panel in a frame (or ~10s on a real network), i.e. the blink.
+  // An automatic background reconnect leaves connectingId null, so it still
+  // falls through to the skeleton as before.
+  if (!isConnected && (!serverIsLoading || connectingId !== null)) {
     return (
       <QuickConnectPanel
         savedServers={savedServers}
@@ -1187,8 +1224,16 @@ export default function TorrentsScreen() {
       <FocusAwareStatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <View style={[styles.container, { backgroundColor: colors.background }]}>
         <Animated.View
+          onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
           style={[
             styles.headerContainer,
+            // In selectMode the header is pinned (see the selectMode effect
+            // above) — switch it from an absolute overlay to a normal in-flow
+            // sibling so it physically pushes the list down instead of
+            // floating on top of it. Cards can only render underneath it (as
+            // in normal browsing, by design) when it's an overlay; pinned +
+            // overlay together is exactly the overlap this avoids.
+            selectMode && styles.headerContainerPinned,
             {
               backgroundColor: 'transparent',
               transform: [{ translateY: headerTranslateY }],
@@ -1196,6 +1241,25 @@ export default function TorrentsScreen() {
           ]}
         >
           <View style={[styles.searchCard, { backgroundColor: 'transparent' }]}>
+            {/* Current server — opens the quick server switcher (#249) */}
+            {!selectMode && currentServer && (
+              <TouchableOpacity
+                style={styles.serverSwitcherRow}
+                onPress={() => {
+                  haptics.light();
+                  setShowServerSwitcher(true);
+                }}
+                activeOpacity={0.7}
+                accessibilityLabel={t('screens.torrents.switchServer')}
+              >
+                <ServerIconBadge server={currentServer} size={20} />
+                <Text style={[styles.serverSwitcherText, { color: colors.text }]} numberOfLines={1}>
+                  {currentServer.name}
+                </Text>
+                <Ionicons name="chevron-down" size={14} color={colors.textSecondary} />
+              </TouchableOpacity>
+            )}
+
             {/* Search bar with Sort button */}
             <View style={styles.searchRow}>
               {/* LEFT: Sort button — fixed 42×42 */}
@@ -1594,7 +1658,7 @@ export default function TorrentsScreen() {
           <FlatList
             data={filteredTorrents}
             keyExtractor={(item) => item.hash}
-            style={{ backgroundColor: colors.background }}
+            style={{ flex: 1, backgroundColor: colors.background }}
             renderItem={({ item }) => {
               const itemIsPaused =
                 item.state === 'pausedDL' ||
@@ -1825,7 +1889,15 @@ export default function TorrentsScreen() {
                 tintColor={colors.primary}
               />
             }
-            contentContainerStyle={styles.listContent}
+            contentContainerStyle={[
+              styles.listContent,
+              // Only the absolute-overlay (non-selectMode) header needs the
+              // list content pushed down by its height — in selectMode the
+              // header is a normal in-flow sibling (see headerContainerPinned)
+              // and already occupies that space in the layout itself.
+              selectMode ? { paddingTop: spacing.sm } : { paddingTop: headerHeight },
+              selectMode && selectedHashes.size > 0 && { paddingBottom: bulkActionsBarHeight },
+            ]}
             onScroll={handleScroll}
             scrollEventThrottle={50}
             removeClippedSubviews={false}
@@ -1837,6 +1909,7 @@ export default function TorrentsScreen() {
 
         {selectMode && selectedHashes.size > 0 && (
           <View
+            onLayout={(e) => setBulkActionsBarHeight(e.nativeEvent.layout.height)}
             style={[
               styles.bulkActionsBar,
               { backgroundColor: colors.surface, borderTopColor: colors.surfaceOutline },
@@ -2134,6 +2207,18 @@ export default function TorrentsScreen() {
             setListDeleteConfirm(null);
           }}
         />
+
+        <ServerSwitcherModal
+          visible={showServerSwitcher}
+          servers={savedServers}
+          currentServerId={currentServer?.id ?? null}
+          onSelectServer={connectToServer}
+          onManageServers={() => {
+            setShowServerSwitcher(false);
+            router.push('/settings/servers');
+          }}
+          onClose={() => setShowServerSwitcher(false)}
+        />
       </View>
     </>
   );
@@ -2309,11 +2394,33 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: 1000,
   },
+  // Cancels the absolute positioning above — see its usage in selectMode.
+  headerContainerPinned: {
+    position: 'relative',
+    top: undefined,
+    left: undefined,
+    right: undefined,
+  },
   searchCard: {
     borderRadius: borderRadius.medium,
     paddingHorizontal: spacing.md,
     paddingTop: spacing.sm,
     paddingBottom: spacing.xs,
+  },
+  serverSwitcherRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: spacing.xs,
+    marginBottom: spacing.sm,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.xs,
+    maxWidth: '100%',
+  },
+  serverSwitcherText: {
+    fontSize: 14,
+    fontWeight: '600',
+    flexShrink: 1,
   },
   searchRow: {
     flexDirection: 'row',
@@ -2379,7 +2486,8 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   listContent: {
-    paddingTop: 100,
+    // paddingTop is applied dynamically (see headerHeight) — headerContainer
+    // is an absolute overlay whose height varies with selectMode.
     paddingHorizontal: spacing.md,
     borderRadius: borderRadius.large,
   },

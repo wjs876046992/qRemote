@@ -18,7 +18,7 @@ import path from 'path';
 
 const LOCALES_DIR = path.join(__dirname, '..', '..', 'locales');
 const SOURCE_LOCALE = 'en';
-const TARGET_LOCALES = ['es', 'zh', 'fr', 'de', 'ru'];
+const TARGET_LOCALES = ['es', 'zh', 'fr', 'de', 'ru', 'pl'];
 
 type TranslationTree = { [key: string]: string | TranslationTree };
 
@@ -58,6 +58,7 @@ const COINCIDENTAL_MATCH_ALLOWLIST = new Set<string>([
   // their canonical form across all locales.
   'placeholders.magnetLink',
   'placeholders.trackerUrl',
+  'placeholders.quiProxyUrl',
   'screens.search.placeholder',
   'screens.search.installPluginPlaceholder',
   'screens.rss.addFeedPlaceholder',
@@ -92,6 +93,9 @@ const COINCIDENTAL_MATCH_ALLOWLIST = new Set<string>([
   // "Experimental" is spelled identically in Spanish — a genuine cognate,
   // not an untranslated leftover.
   'screens.settings.i2pSection',
+  // "source" is spelled identically in French — a genuine cognate (#267).
+  'screens.search.sourcesCount_one',
+  'screens.search.sourcesCount_other',
 ]);
 
 /**
@@ -123,7 +127,9 @@ describe('i18n locale parity', () => {
     });
 
     it('has no extra keys that en does not have', () => {
-      const extra = [...localeKeys].filter((k) => !enKeySet.has(k));
+      const extra = [...localeKeys].filter(
+        (k) => !enKeySet.has(k) && !(locale === 'pl' && /_(few|many)$/.test(k)),
+      );
       expect(extra).toEqual([]);
     });
 

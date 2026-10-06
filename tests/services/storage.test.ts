@@ -115,6 +115,70 @@ describe('storageService', () => {
       expect(raw[0].apiKey).toBe('');
     });
 
+    it('persists the qui proxy flag and key separately, storing the key in SecureStore (#272)', async () => {
+      await storageService.saveServer(
+        makeServer({
+          useQuiProxy: true,
+          quiProxyKey: 'quikey1234567890abcdef',
+          basePath: '/qui',
+          password: '',
+        }),
+      );
+      // The key must never be written to AsyncStorage...
+      const rawText = mockAsyncStorage['servers'];
+      expect(rawText).not.toContain('quikey1234567890abcdef');
+      const raw = JSON.parse(rawText);
+      expect(raw[0].quiProxyKey).toBe('');
+      // ...but the flag must survive (an explicit field map drops anything unlisted).
+      expect(raw[0].useQuiProxy).toBe(true);
+      expect(mockSecureStore['server_qui_proxy_key_s1']).toBe('quikey1234567890abcdef');
+
+      // Round trip: save -> getServers rehydrates the key from SecureStore.
+      const servers = await storageService.getServers();
+      expect(servers[0].useQuiProxy).toBe(true);
+      expect(servers[0].quiProxyKey).toBe('quikey1234567890abcdef');
+      expect(servers[0].basePath).toBe('/qui');
+    });
+
+    it('defaults useQuiProxy to false and the key to empty for ordinary servers', async () => {
+      await storageService.saveServer(makeServer());
+      const servers = await storageService.getServers();
+      expect(servers[0].useQuiProxy).toBe(false);
+      expect(servers[0].quiProxyKey).toBe('');
+    });
+
+    it('degrades to an empty qui key when SecureStore cannot read it', async () => {
+      await storageService.saveServer(makeServer({ useQuiProxy: true, quiProxyKey: 'abc123' }));
+      const SecureStore = jest.requireMock('expo-secure-store');
+      SecureStore.getItemAsync.mockImplementation((key: string) =>
+        key === 'server_qui_proxy_key_s1'
+          ? Promise.reject(new Error('cannot decrypt'))
+          : Promise.resolve(mockSecureStore[key] ?? null),
+      );
+      const servers = await storageService.getServers();
+      expect(servers).toHaveLength(1);
+      expect(servers[0].quiProxyKey).toBe('');
+      SecureStore.getItemAsync.mockImplementation((key: string) =>
+        Promise.resolve(mockSecureStore[key] ?? null),
+      );
+    });
+
+    it('persists allowInsecureCert across save and reload (#256)', async () => {
+      // The write map lists fields explicitly; this flag was once omitted,
+      // so it held for the session and was gone on the next cold launch.
+      await storageService.saveServer(makeServer({ allowInsecureCert: true }));
+      const raw = JSON.parse(mockAsyncStorage['servers']);
+      expect(raw[0].allowInsecureCert).toBe(true);
+      const servers = await storageService.getServers();
+      expect(servers[0].allowInsecureCert).toBe(true);
+    });
+
+    it('defaults allowInsecureCert to false when unset', async () => {
+      await storageService.saveServer(makeServer());
+      const servers = await storageService.getServers();
+      expect(servers[0].allowInsecureCert).toBe(false);
+    });
+
     it('persists customHeaders separately, storing them in SecureStore', async () => {
       await storageService.saveServer(
         makeServer({
@@ -244,6 +308,24 @@ describe('storageService', () => {
       expect(raw.find((s: { id: string }) => s.id === 's2').apiKey).toBe('');
       const servers = await storageService.getServers();
       expect(servers.find((s) => s.id === 's2')?.apiKey).toBe('qbt_keepme1234567890123456789012');
+    });
+
+    it('removes the qui proxy key and blanks it on surviving records (#272)', async () => {
+      await storageService.saveServer(
+        makeServer({ id: 's1', useQuiProxy: true, quiProxyKey: 'deleteme-key' }),
+      );
+      await storageService.saveServer(
+        makeServer({ id: 's2', useQuiProxy: true, quiProxyKey: 'keepme-key' }),
+      );
+      await storageService.deleteServer('s1');
+      expect(mockSecureStore['server_qui_proxy_key_s1']).toBeUndefined();
+      // deleteServer rewrites the whole list; the surviving record must not leak its key.
+      expect(mockAsyncStorage['servers']).not.toContain('keepme-key');
+      const raw = JSON.parse(mockAsyncStorage['servers']);
+      expect(raw.find((s: { id: string }) => s.id === 's2').quiProxyKey).toBe('');
+      expect(raw.find((s: { id: string }) => s.id === 's2').useQuiProxy).toBe(true);
+      const servers = await storageService.getServers();
+      expect(servers.find((s) => s.id === 's2')?.quiProxyKey).toBe('keepme-key');
     });
 
     it('removes the customHeaders secret on delete', async () => {

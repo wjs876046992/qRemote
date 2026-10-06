@@ -45,6 +45,13 @@ export type AddTorrentDialogField =
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 
+/**
+ * Search tab "Search in" scope: 'names' keeps only results whose name contains
+ * every term of the submitted search; 'everywhere' keeps whatever the plugins
+ * returned (the pre-#266 behavior).
+ */
+export type SearchInMode = 'names' | 'everywhere';
+
 export interface AppPreferences {
   /**
    * @deprecated Use `themeMode` instead. Kept for backward compatibility:
@@ -160,6 +167,25 @@ export interface AppPreferences {
   lastSearchCategory?: string;
 
   /**
+   * Search tab: hide results that report exactly 0 seeders. Only an explicit 0
+   * is hidden — qBittorrent uses -1 for "unknown", which stays visible.
+   */
+  searchHideZeroSeeders?: boolean;
+
+  /**
+   * Search tab: collapse results that look like the same torrent (same info hash,
+   * or same name and size) into one expandable row (#267). Absent is treated as
+   * on, so the default is applied to existing users too.
+   */
+  searchGroupDuplicates?: boolean;
+
+  /**
+   * Search tab "Search in" default (#266). Absent is treated as 'everywhere',
+   * so existing users see no change.
+   */
+  searchInMode?: SearchInMode;
+
+  /**
    * Last active category filter on the torrents tab.
    * null = All categories; '' = Uncategorized (torrents with no category set).
    */
@@ -241,6 +267,9 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   expandedCardGridColumns: 4,
   lastSearchPlugin: 'all',
   lastSearchCategory: 'all',
+  searchHideZeroSeeders: false,
+  searchGroupDuplicates: true,
+  searchInMode: 'everywhere',
   lastCategoryFilter: null,
   lastTagFilters: [],
 };

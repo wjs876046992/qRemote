@@ -71,6 +71,10 @@ export function TransferProvider({ children }: { children: ReactNode }) {
     queryFn: fetchTransferInfo,
     refetchInterval: isAppActive ? 3000 : false,
     enabled: isConnected,
+    // This poll already refetches every 3s — a query-level retry on top of
+    // the client's own retry/backoff (services/api/client.ts) is how a dead
+    // server turned into a ~2 minute hang instead of a bounded failure (#254).
+    retry: 0,
   });
 
   // Clear mutation errors and recovery state after each successful fetch

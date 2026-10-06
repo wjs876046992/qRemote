@@ -1,23 +1,24 @@
 /**
- * LogViewer.tsx — Modal viewer for locally stored connectivity/debug logs with export support.
+ * LogViewer.tsx — Modal viewer for the in-memory connectivity/debug log
+ * (services/connectivity-log.ts), with copy-to-clipboard support.
  *
  * Key exports: LogViewer
  * Known issues: None currently tracked.
  */
 import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  Modal,
-  ScrollView,
-  TouchableOpacity,
-  ActivityIndicator,
-} from 'react-native';
+import { View, Text, StyleSheet, Modal, ScrollView, TouchableOpacity } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '@/context/ThemeContext';
-import { logStorage, StoredLogEntry } from '@/services/log-storage';
+import { useToast } from '@/context/ToastContext';
+import {
+  getConnectivityLog,
+  clearConnectivityLog,
+  formatConnectivityLog,
+  ConnectivityLogEntry,
+  ConnectivityLogLevel,
+} from '@/services/connectivity-log';
 import { spacing, borderRadius } from '@/constants/spacing';
 import { shadows } from '@/constants/shadows';
 import { typography } from '@/constants/typography';
@@ -32,80 +33,66 @@ interface LogViewerProps {
 export function LogViewer({ visible, onClose, onClear, refreshTrigger }: LogViewerProps) {
   const { colors } = useTheme();
   const { t } = useTranslation();
-  const [logs, setLogs] = useState<StoredLogEntry[]>([]);
-  const [loading, setLoading] = useState(false);
+  const { showToast } = useToast();
+  const [logs, setLogs] = useState<ConnectivityLogEntry[]>([]);
 
-  const loadLogs = async () => {
-    setLoading(true);
-    try {
-      const storedLogs = await logStorage.getLogs();
-      if (storedLogs && storedLogs.length > 0) {
-        setLogs(storedLogs.sort((a, b) => b.id - a.id));
-      } else {
-        setLogs([]);
-      }
-    } catch {
-      setLogs([]);
-    } finally {
-      setLoading(false);
-    }
+  // In-memory, synchronous — no loading state needed.
+  const loadLogs = () => {
+    setLogs(getConnectivityLog().slice().reverse());
   };
 
   useEffect(() => {
     if (visible) {
-      // Small delay to ensure logs are stored before loading
-      const timer = setTimeout(() => {
-        loadLogs();
-      }, 100);
-      return () => clearTimeout(timer);
-    } else {
-      // Don't clear logs when modal closes - keep them in storage
+      loadLogs();
     }
   }, [visible, refreshTrigger]);
 
-  const handleClear = async () => {
+  const handleClear = () => {
+    clearConnectivityLog();
+    setLogs([]);
+    if (onClear) {
+      onClear();
+    }
+  };
+
+  const handleCopy = async () => {
     try {
-      await logStorage.clearLogs();
-      // Clear logs from state immediately - don't reload
-      setLogs([]);
-      if (onClear) {
-        onClear();
-      }
-    } catch (error) {
-      console.error('Failed to clear logs:', error);
-      // Even if there's an error, try to clear the UI
-      setLogs([]);
+      await Clipboard.setStringAsync(formatConnectivityLog());
+      showToast(t('toast.connectivityLogCopied'), 'success');
+    } catch {
+      showToast(t('errors.failedToCopyLog'), 'error');
     }
   };
 
-  const getLogTypeColor = (type: number): string => {
-    switch (type) {
-      case 1:
-        return colors.textSecondary; // Normal
-      case 2:
+  const getLogTypeColor = (level: ConnectivityLogLevel): string => {
+    switch (level) {
+      case 'DEBUG':
+        return colors.textSecondary;
+      case 'WARN':
         return colors.warning;
-      case 4:
-        return colors.error; // Critical
+      case 'ERROR':
+        return colors.error;
       default:
-        return colors.primary; // Info
+        return colors.primary; // INFO
     }
   };
 
-  const getLogTypeLabel = (type: number): string => {
-    switch (type) {
-      case 1:
-        return t('screens.logs.normal');
-      case 2:
-        return t('screens.logs.warning');
-      case 4:
-        return t('screens.logs.critical');
+  const getLogTypeLabel = (level: ConnectivityLogLevel): string => {
+    switch (level) {
+      case 'DEBUG':
+        return t('screens.settings.logLevelDebug');
+      case 'WARN':
+        return t('screens.settings.logLevelWarn');
+      case 'ERROR':
+        return t('screens.settings.logLevelError');
       default:
-        return t('screens.logs.info');
+        return t('screens.settings.logLevelInfo');
     }
   };
 
   const formatTimestamp = (timestamp: number): string => {
-    const date = new Date(timestamp * 1000);
+    // ConnectivityLogEntry.timestamp is Date.now() — already milliseconds.
+    const date = new Date(timestamp);
     return date.toLocaleString();
   };
 
@@ -126,10 +113,26 @@ export function LogViewer({ visible, onClose, onClear, refreshTrigger }: LogView
               { borderBottomColor: colors.surfaceOutline, backgroundColor: colors.surface },
             ]}
           >
-            <Text style={[styles.title, { color: colors.text }]}>
+            <Text
+              style={[styles.title, { color: colors.text }]}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+            >
               {t('screens.settings.logsTitle')}
             </Text>
             <View style={styles.headerButtons}>
+              <TouchableOpacity
+                onPress={handleCopy}
+                style={styles.copyButton}
+                disabled={logs.length === 0}
+                accessibilityLabel={t('common.copy')}
+              >
+                <Ionicons
+                  name="copy-outline"
+                  size={20}
+                  color={logs.length === 0 ? colors.textSecondary : colors.primary}
+                />
+              </TouchableOpacity>
               <TouchableOpacity
                 onPress={handleClear}
                 style={[styles.clearButton, { backgroundColor: colors.error }]}
@@ -149,18 +152,14 @@ export function LogViewer({ visible, onClose, onClear, refreshTrigger }: LogView
           </View>
 
           {/* Logs Content */}
-          {loading ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={colors.primary} />
-            </View>
-          ) : logs.length === 0 ? (
+          {logs.length === 0 ? (
             <View style={styles.emptyContainer}>
               <Ionicons name="document-text-outline" size={64} color={colors.textSecondary} />
               <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
                 {t('screens.settings.noLogsAvailable')}
               </Text>
               <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>
-                {t('screens.settings.logsAutoClear')}
+                {t('screens.settings.logsSessionOnly')}
               </Text>
             </View>
           ) : (
@@ -176,14 +175,24 @@ export function LogViewer({ visible, onClose, onClear, refreshTrigger }: LogView
                     styles.logEntry,
                     {
                       backgroundColor: colors.background,
-                      borderLeftColor: getLogTypeColor(log.type),
+                      borderLeftColor: getLogTypeColor(log.level),
                     },
                   ]}
                 >
                   <View style={styles.logHeader}>
-                    <View style={[styles.logTypeBadge, { backgroundColor: colors.primary }]}>
-                      <Text style={[styles.logTypeText, { color: colors.onAccent }]}>
-                        {getLogTypeLabel(log.type)}
+                    <View style={styles.logHeaderLeft}>
+                      <View
+                        style={[
+                          styles.logTypeBadge,
+                          { backgroundColor: getLogTypeColor(log.level) },
+                        ]}
+                      >
+                        <Text style={[styles.logTypeText, { color: colors.onAccent }]}>
+                          {getLogTypeLabel(log.level)}
+                        </Text>
+                      </View>
+                      <Text style={[styles.logTag, { color: colors.textSecondary }]}>
+                        {log.tag}
                       </Text>
                     </View>
                     <Text style={[styles.logTimestamp, { color: colors.textSecondary }]}>
@@ -231,11 +240,17 @@ const styles = StyleSheet.create({
     ...typography.h2,
     fontSize: 24,
     fontWeight: '700',
+    flexShrink: 1,
+    marginRight: spacing.sm,
   },
   headerButtons: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
+    flexShrink: 0,
+  },
+  copyButton: {
+    padding: 8,
   },
   clearButton: {
     flexDirection: 'row',
@@ -256,12 +271,6 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: spacing.md,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: spacing.xl,
   },
   emptyContainer: {
     flex: 1,
@@ -293,6 +302,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: spacing.xs,
   },
+  logHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
   logTypeBadge: {
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,
@@ -303,6 +317,11 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     textTransform: 'uppercase',
+  },
+  logTag: {
+    ...typography.caption,
+    fontSize: 11,
+    fontWeight: '600',
   },
   logTimestamp: {
     ...typography.caption,

@@ -56,6 +56,17 @@ export const storageService = {
       // API key auth (key stored separately in SecureStore)
       useApiKey: s.useApiKey || false,
       apiKey: '', // Don't store API key in AsyncStorage
+      // qui Client Proxy (#272). The flag must be listed here or it is dropped on
+      // cold launch (same trap as allowInsecureCert below); the key is part of
+      // every request URL, so it lives only in SecureStore.
+      useQuiProxy: s.useQuiProxy || false,
+      quiProxyKey: '', // Don't store the qui proxy key in AsyncStorage
+      // Self-signed cert opt-in (#206). This map enumerates fields explicitly
+      // to keep secrets out of AsyncStorage, so a flag added later is silently
+      // dropped unless listed here — which is exactly what happened to this
+      // one (#256): it survived in memory for the session, then vanished on
+      // every cold launch and the native TLS allowlist came up empty.
+      allowInsecureCert: s.allowInsecureCert || false,
       // Custom headers (#228) — values are treated as secrets, stored separately in SecureStore
       useCustomHeaders: s.useCustomHeaders || false,
       customHeaders: [],
@@ -73,6 +84,7 @@ export const storageService = {
       server.basicAuthPassword ?? '',
     );
     await SecureStore.setItemAsync(`server_api_key_${server.id}`, server.apiKey ?? '');
+    await SecureStore.setItemAsync(`server_qui_proxy_key_${server.id}`, server.quiProxyKey ?? '');
     // Sanitized at the chokepoint rather than trusting callers: settings import
     // (app/(tabs)/settings/advanced.tsx) spreads arbitrary JSON into a
     // ServerConfig, so this is the one place guaranteed to see every write.
@@ -113,6 +125,7 @@ export const storageService = {
           const password = await readSecret(`server_password_${server.id}`);
           const basicAuthPassword = await readSecret(`server_basic_auth_password_${server.id}`);
           const apiKey = await readSecret(`server_api_key_${server.id}`);
+          const quiProxyKey = await readSecret(`server_qui_proxy_key_${server.id}`);
           const customHeaders = parseStoredCustomHeaders(
             await readSecret(`server_custom_headers_${server.id}`),
           );
@@ -121,6 +134,7 @@ export const storageService = {
             password,
             basicAuthPassword,
             apiKey,
+            quiProxyKey,
             customHeaders,
             host: stripProtocol(server.host || ''),
             fallbackHost: server.fallbackHost
@@ -164,6 +178,7 @@ export const storageService = {
           password: '',
           basicAuthPassword: '',
           apiKey: '',
+          quiProxyKey: '',
           customHeaders: [],
         })),
       ),
@@ -173,6 +188,7 @@ export const storageService = {
     await SecureStore.deleteItemAsync(`server_password_${id}`);
     await SecureStore.deleteItemAsync(`server_basic_auth_password_${id}`);
     await SecureStore.deleteItemAsync(`server_api_key_${id}`);
+    await SecureStore.deleteItemAsync(`server_qui_proxy_key_${id}`);
     await SecureStore.deleteItemAsync(`server_custom_headers_${id}`);
 
     // If this was the current server, clear it

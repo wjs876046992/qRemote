@@ -40,7 +40,7 @@ import { shadows } from '@/constants/shadows';
 import { typography } from '@/constants/typography';
 import { getErrorMessage } from '@/utils/error';
 import { haptics } from '@/utils/haptics';
-import { toSearchQuery } from '@/utils/rss';
+import { getRssFeedDisplayName, sortArticlesByDateDesc, toSearchQuery } from '@/utils/rss';
 
 export default function RssFeedArticlesScreen() {
   const { t } = useTranslation();
@@ -64,7 +64,7 @@ export default function RssFeedArticlesScreen() {
   const [bulkLoading, setBulkLoading] = useState(false);
 
   const feed = useMemo(() => feeds.find((f) => f.path === itemPath)?.feed, [feeds, itemPath]);
-  const articles = useMemo(() => feed?.articles ?? [], [feed]);
+  const articles = useMemo(() => sortArticlesByDateDesc(feed?.articles ?? []), [feed]);
 
   // ────────────────────────────────────────────────── actions ─────────────
 
@@ -325,7 +325,11 @@ export default function RssFeedArticlesScreen() {
     handleSearchForThis,
   ]);
 
-  const headerTitle = feed?.title || feed?.url || t('screens.rss.feedsTitle');
+  // A name the user gave the feed (a rename, #273) wins; an unnamed feed shows
+  // the title it reports about itself — see getRssFeedDisplayName.
+  const headerTitle = feed
+    ? getRssFeedDisplayName(itemPath, feed) || t('screens.rss.feedsTitle')
+    : t('screens.rss.feedsTitle');
 
   // ────────────────────────────────────────────────── render ──────────────
 

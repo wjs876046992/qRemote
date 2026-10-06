@@ -11,6 +11,9 @@
  * The + button and the cart button are independent affordances: + never
  * touches the cart, and the cart button never adds anything by itself.
  *
+ * A grouped result (#267) renders this row for its primary and passes the
+ * "N sources" toggle and member list as `footer` — see SearchResultGroupRow.
+ *
  * Visuals mirror TorrentCard: surface card, colored "health dot", filename
  * on line 1, meta line on line 2. Expanded state reveals the un-truncated
  * filename and an action chip row underneath.
@@ -41,6 +44,8 @@ interface SearchResultRowProps {
   inCart?: boolean;
   /** Omit to hide the cart button entirely. */
   onToggleCart?: (result: SearchResult) => void;
+  /** Extra content at the bottom of the card, always visible (used by grouped rows). */
+  footer?: React.ReactNode;
 }
 
 // Health dot mirrors the Torrents "state dot" convention:
@@ -63,6 +68,7 @@ export function SearchResultRow({
   isAdding,
   inCart,
   onToggleCart,
+  footer,
 }: SearchResultRowProps) {
   const { colors } = useTheme();
   const { t } = useTranslation();
@@ -208,6 +214,8 @@ export function SearchResultRow({
           </View>
         </>
       )}
+
+      {footer ? <View style={styles.footer}>{footer}</View> : null}
     </TouchableOpacity>
   );
 }
@@ -300,6 +308,9 @@ const styles = StyleSheet.create({
     borderWidth: 0.5,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  footer: {
+    marginTop: spacing.sm,
   },
   divider: {
     height: StyleSheet.hairlineWidth,

@@ -7,8 +7,11 @@ import axios, { AxiosInstance, AxiosError, AxiosHeaders, InternalAxiosRequestCon
 import { ServerConfig } from '@/types/api';
 import { clogDebug, clogInfo, clogWarn, clogError } from '@/services/connectivity-log';
 import { ApiFeatures, getApiFeatures } from '@/utils/apiVersion';
+import { isTlsRejection } from '@/utils/error';
 import { basicAuthHeader } from '@/utils/basicAuth';
 import { isReservedHeaderName } from '@/utils/customHeaders';
+import { getServerAuthMode } from '@/utils/authMode';
+import { QUI_KEY_REJECTED_MESSAGE, redactQuiProxyKey, withQuiProxyPath } from '@/utils/quiProxy';
 
 /** An error from the API client, carrying the HTTP status when the request got a response. */
 export interface ApiError extends Error {
@@ -28,8 +31,21 @@ function apiError(message: string, status?: number): ApiError {
   return err;
 }
 
-/** Config augmented with the session epoch it was issued under (see ApiClient.sessionEpoch). */
-type EpochedRequestConfig = InternalAxiosRequestConfig & { __sessionEpoch?: number };
+/**
+ * Config augmented with the session epoch it was issued under (see
+ * ApiClient.sessionEpoch) and whether its URL carries a qui proxy key. The
+ * latter is stamped per request — not read off `currentServer` when the
+ * response lands — so a late response from a qui server we've since switched
+ * away from is still redacted. Redaction is conditional on it because
+ * `/proxy/<x>` is also a perfectly ordinary qBittorrent reverse-proxy base
+ * path, which diagnostics should keep showing verbatim.
+ */
+type EpochedRequestConfig = InternalAxiosRequestConfig & {
+  __sessionEpoch?: number;
+  __quiProxy?: boolean;
+};
+
+const identity = (text: string): string => text;
 
 class ApiClient {
   private client: AxiosInstance;
@@ -51,6 +67,18 @@ class ApiClient {
    */
   private sessionEpoch: number = 0;
 
+  /**
+   * Aborts every in-flight request relying on the session-scoped signal —
+   * i.e. every call whose caller didn't pass its own `AbortSignal` — and is
+   * itself the signal handed to those calls by default (see `get`/`post`/
+   * `postFormData`/`postUrlEncoded`). Replaced (not just aborted) on every
+   * session teardown so the *next* request isn't dead on arrival. Without
+   * this, a request against a now-unreachable server had nothing to cancel
+   * it: disconnect() had to wait out a full logout POST, and a stale poll
+   * could land long after the app had moved on (#254).
+   */
+  private sessionController: AbortController = new AbortController();
+
   constructor() {
     this.client = axios.create({
       timeout: 10000,
@@ -70,6 +98,7 @@ class ApiClient {
         }
 
         config.__sessionEpoch = this.sessionEpoch;
+        config.__quiProxy = getServerAuthMode(this.currentServer) === 'quiProxy';
 
         const protocol = this.currentServer.useHttps ? 'https' : 'http';
         // Defense-in-depth: strip protocol and trailing colons/slashes from host even if already sanitized
@@ -81,8 +110,17 @@ class ApiClient {
         const portPart =
           portNum !== undefined && !isNaN(portNum) && portNum > 0 ? `:${portNum}` : '';
 
-        // Handle base path - ensure it starts with / and doesn't end with /
+        // qui Client Proxy (#272): the key is a path segment, so the effective
+        // base path is `<qui base>/proxy/<key>`. qui has no Bearer header and no
+        // real login — auth is entirely this path.
+        const isQuiProxy = config.__quiProxy === true;
+        const redact = isQuiProxy ? redactQuiProxyKey : identity;
         let basePath = this.currentServer.basePath || '/';
+        if (isQuiProxy && this.currentServer.quiProxyKey) {
+          basePath = withQuiProxyPath(basePath, this.currentServer.quiProxyKey);
+        }
+
+        // Handle base path - ensure it starts with / and doesn't end with /
         if (!basePath.startsWith('/')) {
           basePath = '/' + basePath;
         }
@@ -96,15 +134,19 @@ class ApiClient {
 
         config.baseURL = `${protocol}://${host}${portPart}${basePath}`;
 
+        // Every URL that reaches the log is redacted — in qui mode the baseURL
+        // contains the secret key.
         clogDebug(
           'HTTP',
-          `${config.method?.toUpperCase() || 'REQ'} ${config.baseURL}${config.url || ''}`,
+          redact(`${config.method?.toUpperCase() || 'REQ'} ${config.baseURL}${config.url || ''}`),
         );
 
         // API key auth (v5.2.0+ / WebAPI 2.14.1+) takes precedence over proxy
         // Basic Auth since both use the same Authorization header — a server
         // configured for both is choosing API key as the more specific option.
-        if (this.currentServer.useApiKey && this.currentServer.apiKey) {
+        // qui mode sends no Bearer header at all (its key is in the path), but
+        // proxy Basic Auth still applies for a gateway sitting in front of qui.
+        if (!isQuiProxy && this.currentServer.useApiKey && this.currentServer.apiKey) {
           config.headers.Authorization = `Bearer ${this.currentServer.apiKey}`;
         } else if (this.currentServer.useBasicAuth && this.currentServer.basicAuthUsername) {
           config.headers.Authorization = basicAuthHeader(
@@ -169,8 +211,25 @@ class ApiClient {
         return response;
       },
       (error: AxiosError) => {
-        const reqUrl = `${error.config?.baseURL || ''}${error.config?.url || ''}`;
+        // Redacted once here: reqUrl and every message below end up in the
+        // connectivity log and/or a thrown (user-visible) Error, and in qui mode
+        // the baseURL carries the secret proxy key.
+        const wasQuiProxy = (error.config as EpochedRequestConfig | undefined)?.__quiProxy === true;
+        const redact = wasQuiProxy ? redactQuiProxyKey : identity;
+        const reqUrl = redact(`${error.config?.baseURL || ''}${error.config?.url || ''}`);
         const status = error.response?.status;
+
+        // qui validates the proxy key from the URL path and answers 401 with a
+        // plain-text "Invalid API key" / "Missing API key". That is a wrong or
+        // revoked key — not a session a re-login can fix — so it gets its own
+        // message rather than the generic fall-through below.
+        if (status === 401 && wasQuiProxy) {
+          const body = error.response?.data?.toString() ?? '';
+          if (/\b(invalid|missing) api key\b/i.test(body)) {
+            clogError('HTTP', `401 qui rejected the proxy key — ${reqUrl}`);
+            throw apiError(QUI_KEY_REJECTED_MESSAGE, status);
+          }
+        }
 
         // Handle authentication errors
         if (status === 403) {
@@ -221,7 +280,7 @@ class ApiClient {
 
         // Handle 404 Not Found errors
         if (status === 404) {
-          const fullUrl = `${error.config?.baseURL}${error.config?.url}`;
+          const fullUrl = reqUrl;
           clogWarn('HTTP', `404 Not Found — ${fullUrl}`);
           throw apiError(
             `Endpoint not found: ${fullUrl}. Please check your qBittorrent version and API compatibility.`,
@@ -231,13 +290,42 @@ class ApiClient {
 
         // Handle network errors
         if (error.code === 'ECONNABORTED' || error.code === 'ERR_NETWORK') {
+          // iOS's TLS-certificate rejection (NSURLErrorServerCertificateUntrusted,
+          // -1202, and friends) surfaces here too — as a plain ERR_NETWORK with
+          // no distinguishing code (#256). Without this, a rejected self-signed
+          // certificate is indistinguishable from a genuinely dead server, so
+          // nobody can tell what's wrong from the app alone. isTlsRejection reads
+          // the native error description RN stashes on the XHR (see utils/error.ts)
+          // to tell the two apart. This is a *new*, separate message — do not fold
+          // it into 'Connection timeout...' below, which callers substring-match.
+          if (isTlsRejection(error)) {
+            clogWarn('TLS', `Certificate rejected — ${reqUrl}`);
+            throw apiError(
+              'Certificate rejected. Enable "Allow Untrusted, Self-Signed Certificate" for this server if you trust it.',
+              status,
+            );
+          }
           clogError('HTTP', `Network error (${error.code}) — ${reqUrl}`);
           throw apiError('Connection timeout. Please check your server connection.', status);
         }
 
+        // A request we cancelled ourselves — session teardown (setServer,
+        // clearCookies) or an explicit abortInFlight() (disconnect, server
+        // switch). Give it its own identifiable message rather than falling
+        // into the generic branch below and surfacing as "canceled": it must
+        // never be retried (isRetriableError doesn't match ERR_CANCELED) and
+        // must never look like a real failure to callers — deliberately kept
+        // out of RECONNECTABLE_MESSAGES (hooks/useReactiveReconnect.ts) so it
+        // can't trigger a reconnect or flash error UI.
+        if (error.code === 'ERR_CANCELED') {
+          clogDebug('HTTP', `Request canceled — ${reqUrl}`);
+          throw apiError('Request canceled.', status);
+        }
+
         // Handle other errors
-        const message =
-          error.response?.data?.toString() || error.message || 'An unknown error occurred';
+        const message = redact(
+          error.response?.data?.toString() || error.message || 'An unknown error occurred',
+        );
         clogError(
           'HTTP',
           `${status ? 'HTTP ' + status : error.code || 'Unknown'} — ${reqUrl}: ${message}`,
@@ -279,6 +367,7 @@ class ApiClient {
       this.apiVersion = null;
       this.cachedFeatures = null;
       this.sessionEpoch++;
+      this.abortInFlight();
     }
     this.currentServer = server;
     if (server) {
@@ -295,10 +384,25 @@ class ApiClient {
   clearCookies() {
     this.cookies = '';
     this.sessionEpoch++;
+    this.abortInFlight();
   }
 
   getCookies(): string {
     return this.cookies;
+  }
+
+  /**
+   * Cancels every in-flight request that's relying on the session-scoped
+   * signal (any `get`/`post`/`postFormData`/`postUrlEncoded` call whose
+   * caller didn't pass its own `AbortSignal`) and starts a fresh session so
+   * the next request isn't dead on arrival. Called automatically by
+   * `setServer`/`clearCookies` on every session teardown, and directly by
+   * `ServerManager.disconnect()` so a hung request against an unreachable
+   * server can't make disconnect feel unresponsive (#254).
+   */
+  abortInFlight(): void {
+    this.sessionController.abort();
+    this.sessionController = new AbortController();
   }
 
   /**
@@ -320,7 +424,7 @@ class ApiClient {
     this.cookies = Array.from(jar.values()).join('; ');
   }
 
-  async postFormData(url: string, data: FormData): Promise<unknown> {
+  async postFormData(url: string, data: FormData, signal?: AbortSignal): Promise<unknown> {
     if (!this.currentServer) {
       throw new Error('No server configured');
     }
@@ -330,7 +434,10 @@ class ApiClient {
       headers.set('Cookie', this.cookies);
     }
 
-    const response = await this.client.post(url, data, { headers });
+    const response = await this.client.post(url, data, {
+      headers,
+      signal: signal ?? this.sessionController.signal,
+    });
     return response.data;
   }
 
@@ -339,6 +446,20 @@ class ApiClient {
     data: Record<string, string | number | boolean>,
     signal?: AbortSignal,
   ): Promise<unknown> {
+    return (await this.postUrlEncodedWithStatus(url, data, signal)).data;
+  }
+
+  /**
+   * Same request as `postUrlEncoded`, but also reports the HTTP status of the
+   * 2xx response. Needed by the few endpoints that signal progress through the
+   * status code rather than the body — e.g. torrents/fetchMetadata answers 202
+   * while a download is still in flight and 200 once it has the metadata.
+   */
+  async postUrlEncodedWithStatus(
+    url: string,
+    data: Record<string, string | number | boolean>,
+    signal?: AbortSignal,
+  ): Promise<{ data: unknown; status: number }> {
     // Check server is configured (interceptor will also check, but fail early with better error)
     if (!this.currentServer) {
       throw new Error('No server configured. Please connect to a server first.');
@@ -355,8 +476,10 @@ class ApiClient {
     const body = params.join('&');
 
     // Let the interceptor handle headers (it already sets Content-Type) and baseURL
-    const response = await this.client.post(url, body, { signal });
-    return response.data;
+    const response = await this.client.post(url, body, {
+      signal: signal ?? this.sessionController.signal,
+    });
+    return { data: response.data, status: response.status };
   }
 
   private isRetriableError(error: unknown): boolean {
@@ -371,19 +494,45 @@ class ApiClient {
     return error instanceof Error && error.message.includes('timeout');
   }
 
-  private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  /**
+   * `connectionTimeout` (`this.client.defaults.timeout`) is a total budget
+   * for the whole logical request, not a per-attempt allowance — otherwise
+   * up to `retryAttempts + 1` attempts each waiting out the full timeout,
+   * plus backoff between them, turned one GET against a dead server into
+   * ~43s (and, with TanStack's own query-level retry on top, ~2 minutes)
+   * before anything surfaced (#254). A floor keeps the last attempt in a
+   * near-exhausted budget from being handed ~0ms.
+   */
+  private static readonly ATTEMPT_TIMEOUT_FLOOR_MS = 1000;
+
+  private async withRetry<T>(fn: (timeoutMs: number) => Promise<T>): Promise<T> {
+    const totalBudgetMs = this.client.defaults.timeout || 10000;
+    const deadline = Date.now() + totalBudgetMs;
     let lastError: unknown;
+
     for (let attempt = 0; attempt <= this.retryAttempts; attempt++) {
+      const remainingBeforeAttempt = deadline - Date.now();
+      if (attempt > 0 && remainingBeforeAttempt <= 0) {
+        throw lastError;
+      }
+      const attemptTimeout = Math.max(ApiClient.ATTEMPT_TIMEOUT_FLOOR_MS, remainingBeforeAttempt);
+
       try {
-        return await fn();
+        return await fn(attemptTimeout);
       } catch (error: unknown) {
         lastError = error;
-        if (attempt < this.retryAttempts && this.isRetriableError(error)) {
-          await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
-          clogWarn('HTTP', `Retrying request (attempt ${attempt + 1}/${this.retryAttempts})...`);
-          continue;
+        if (attempt >= this.retryAttempts || !this.isRetriableError(error)) {
+          throw error;
         }
-        throw error;
+        const backoff = 500 * (attempt + 1);
+        const remainingAfterFailure = deadline - Date.now();
+        if (remainingAfterFailure <= backoff) {
+          // The backoff sleep alone would blow the budget — stop now rather
+          // than sleep past it and retry anyway.
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, backoff));
+        clogWarn('HTTP', `Retrying request (attempt ${attempt + 1}/${this.retryAttempts})...`);
       }
     }
     throw lastError;
@@ -398,8 +547,13 @@ class ApiClient {
       throw new Error('No server configured');
     }
 
-    return this.withRetry(async () => {
-      const response = await this.client.get(url, { params, signal });
+    const effectiveSignal = signal ?? this.sessionController.signal;
+    return this.withRetry(async (timeoutMs) => {
+      const response = await this.client.get(url, {
+        params,
+        signal: effectiveSignal,
+        timeout: timeoutMs,
+      });
       return response.data;
     });
   }
@@ -409,7 +563,9 @@ class ApiClient {
       throw new Error('No server configured');
     }
 
-    const response = await this.client.post(url, data, { signal });
+    const response = await this.client.post(url, data, {
+      signal: signal ?? this.sessionController.signal,
+    });
     return response.data;
   }
 }

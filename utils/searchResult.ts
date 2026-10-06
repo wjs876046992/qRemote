@@ -50,6 +50,21 @@ export function extractBracketTag(fileName: string): string | null {
 }
 
 /**
+ * `fileName` with the bracketed indexer tag removed — the same tag
+ * `extractBracketTag` would report ("Movie 2024 [MyIndexer]" → "Movie 2024").
+ * Quality/codec tags like "[1080p]" are left alone. Used to compare titles
+ * across indexers, where the tag is the only part that differs.
+ */
+export function stripBracketTag(fileName: string): string {
+  if (!fileName) return '';
+  const suffix = BRACKET_SUFFIX.exec(fileName);
+  if (suffix && validTag(suffix[1])) return fileName.slice(0, suffix.index).trimEnd();
+  const prefix = BRACKET_PREFIX.exec(fileName);
+  if (prefix && validTag(prefix[1])) return fileName.slice(prefix[0].length).trimStart();
+  return fileName;
+}
+
+/**
  * Best-effort per-result indexer/tracker label. Pass `isAggregated: true`
  * when every result in the current batch shares one `siteUrl` (a strong
  * signal the search went through a proxying plugin like Prowlarr/Jackett),

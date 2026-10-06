@@ -23,7 +23,6 @@ import { TransferProvider } from '@/context/TransferContext';
 import { ThemeProvider, useTheme } from '@/context/ThemeContext';
 import { ToastProvider, useToast } from '@/context/ToastContext';
 import { SearchCartProvider } from '@/context/SearchCartContext';
-import { logStorage } from '@/services/log-storage';
 import { storageService } from '@/services/storage';
 import { apiClient } from '@/services/api/client';
 import { setHapticsEnabled } from '@/utils/haptics';
@@ -324,8 +323,6 @@ function StackNavigator() {
 
 export default function RootLayout() {
   useEffect(() => {
-    logStorage.autoDeleteIfNeeded();
-
     // Apply persisted preferences to global modules at cold start so they
     // take effect immediately — before the user ever visits Settings.
     storageService

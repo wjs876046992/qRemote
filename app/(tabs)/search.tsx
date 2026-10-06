@@ -13,8 +13,10 @@ import {
   FlatList,
   TextInput,
   TouchableOpacity,
+  Pressable,
   ActivityIndicator,
   ScrollView,
+  Switch,
   Linking,
   Share,
   Keyboard,
@@ -29,24 +31,36 @@ import { useQuery } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { FocusAwareStatusBar } from '@/components/FocusAwareStatusBar';
-import { SearchResultRow } from '@/components/SearchResultRow';
+import { SearchResultGroupRow } from '@/components/SearchResultGroupRow';
 import { ActionMenu, ActionMenuItemDef } from '@/components/ActionMenu';
 import { SearchCartModal } from '@/components/SearchCartModal';
 import { EmptyState } from '@/components/EmptyState';
 import { FilterChip } from '@/components/FilterChip';
+import { SearchFilterPanel } from '@/components/SearchFilterPanel';
 import { useApiFeatures } from '@/context/ApiVersionContext';
 import { useServer } from '@/context/ServerContext';
 import { useTheme } from '@/context/ThemeContext';
 import { useToast } from '@/context/ToastContext';
 import { useSearchCart } from '@/context/SearchCartContext';
 import { useSearchJob } from '@/hooks/useSearchJob';
+import { useSearchHashResolver } from '@/hooks/useSearchHashResolver';
 import { searchApi } from '@/services/api/search';
 import { torrentsApi } from '@/services/api/torrents';
 import { tagsApi } from '@/services/api/tags';
 import { storageService } from '@/services/storage';
+import { abortableDelay, prepareTrackerTopUp } from '@/services/search-tracker-topup';
 import { clogDebug, clogWarn } from '@/services/connectivity-log';
 import { SearchPlugin, SearchResult } from '@/types/api';
+import { SearchInMode } from '@/types/preferences';
 import { siteHost, resultTrackerLabel } from '@/utils/searchResult';
+import {
+  EMPTY_SEARCH_FILTER_DRAFT,
+  SearchFilterDraft,
+  SearchFilterOptions,
+  draftToFilterOptions,
+  filterSearchResults,
+  hasActiveFilters,
+} from '@/utils/search-filters';
 import {
   getAddTorrentDialogueVariant,
   getSearchAddOpensDialogue,
@@ -57,11 +71,19 @@ import { typography } from '@/constants/typography';
 import { buttonStyles, buttonText } from '@/constants/buttons';
 import { getErrorMessage } from '@/utils/error';
 import { haptics } from '@/utils/haptics';
+import { compareByQuality } from '@/utils/video-quality';
+import {
+  GroupAddPlan,
+  SearchResultGroup,
+  groupSearchResults,
+  planGroupAdd,
+  singletonGroups,
+} from '@/utils/search-grouping';
 
 const ALL = 'all';
 const ENABLED = 'enabled';
 
-type SortKey = 'seeders' | 'size' | 'name' | 'leechers' | 'date';
+type SortKey = 'seeders' | 'size' | 'name' | 'leechers' | 'date' | 'quality';
 
 const SORT_OPTIONS: Array<{
   key: SortKey;
@@ -73,6 +95,7 @@ const SORT_OPTIONS: Array<{
   { key: 'size', labelKey: 'screens.search.sortSize', icon: 'cube-outline' },
   { key: 'name', labelKey: 'screens.search.sortName', icon: 'text-outline' },
   { key: 'date', labelKey: 'screens.search.sortDate', icon: 'calendar-outline' },
+  { key: 'quality', labelKey: 'screens.search.sortQuality', icon: 'film-outline' },
 ];
 
 const TAG_MATCH_ATTEMPTS = 8;
@@ -93,21 +116,7 @@ async function tagNewlyDownloadedTorrent(
 ): Promise<void> {
   for (let attempt = 0; attempt < TAG_MATCH_ATTEMPTS; attempt++) {
     if (signal?.aborted) return;
-    await new Promise<void>((resolve) => {
-      if (signal?.aborted) {
-        resolve();
-        return;
-      }
-      const onAbort = () => {
-        clearTimeout(timeout);
-        resolve();
-      };
-      const timeout = setTimeout(() => {
-        signal?.removeEventListener('abort', onAbort);
-        resolve();
-      }, TAG_MATCH_DELAY_MS);
-      signal?.addEventListener('abort', onAbort, { once: true });
-    });
+    await abortableDelay(TAG_MATCH_DELAY_MS, signal);
     if (signal?.aborted) return;
     try {
       const list = await torrentsApi.getTorrentList();
@@ -135,6 +144,14 @@ async function tagNewlyDownloadedTorrent(
   }
   if (signal?.aborted) return;
   clogWarn('SEARCH', `Could not find newly added torrent "${fileName}" to auto-tag with "${tag}"`);
+}
+
+/** What a group add carries beyond the single result handed to the normal add path. */
+interface GroupAddExtras {
+  /** The row to show the spinner on, when that differs from `result.fileUrl` (a merged magnet). */
+  pendingUrl?: string;
+  /** Other sources' trackers to attach once the torrent exists (services/search-tracker-topup.ts). */
+  trackerFollowUp?: GroupAddPlan['trackerFollowUp'];
 }
 
 export default function SearchScreen() {
@@ -240,8 +257,33 @@ export default function SearchScreen() {
   const [sortBy, setSortBy] = useState<SortKey>('seeders');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [showSortMenu, setShowSortMenu] = useState(false);
+  const [hideZeroSeeders, setHideZeroSeeders] = useState(false);
+  // #267: collapse results that look like the same torrent into one row. On by
+  // default (a stored `false` is restored at mount) — see utils/search-grouping.ts.
+  const [groupDuplicates, setGroupDuplicates] = useState(true);
+  // #266 filter panel. `searchInMode` is the persisted "Search in" default;
+  // everything in `filterDraft` is session-only and resets on a new search.
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
+  const [searchInMode, setSearchInMode] = useState<SearchInMode>('everywhere');
+  const [filterDraft, setFilterDraft] = useState<SearchFilterDraft>(EMPTY_SEARCH_FILTER_DRAFT);
+  // What the open panel is editing. Nothing here touches the results until the
+  // user taps Apply, which copies it into `filterDraft` / `searchInMode`.
+  const [stagedDraft, setStagedDraft] = useState<SearchFilterDraft>(EMPTY_SEARCH_FILTER_DRAFT);
+  const [stagedSearchIn, setStagedSearchIn] = useState<SearchInMode>('everywhere');
+  // The pattern of the search whose results are on screen. "Names only"
+  // matches against this rather than the live query box, so editing the box
+  // after a search doesn't retroactively re-filter (or empty) the list.
+  const [submittedPattern, setSubmittedPattern] = useState('');
+  const pendingPatternRef = useRef('');
+  // The pattern the filter box was last pre-filled with. Opening the filter
+  // panel seeds the box with the current search once per search, so clearing
+  // it afterwards stays cleared instead of snapping back on the next open.
+  const prefilledPatternRef = useRef('');
   const [pendingAddUrl, setPendingAddUrl] = useState<string | null>(null);
   const [actionResult, setActionResult] = useState<SearchResult | null>(null);
+  // The group behind the long-pressed row, when it has more than one source —
+  // lets "Add now" add the whole group rather than just the row's primary.
+  const [actionGroup, setActionGroup] = useState<SearchResultGroup | null>(null);
 
   // pubDate is a qBit 5.0+ (WebAPI >= 2.11.0) field — hide the option on older
   // servers rather than offering a sort that silently does nothing.
@@ -250,16 +292,21 @@ export default function SearchScreen() {
     [features.supportsSearchPubDate],
   );
 
-  // Load remembered plugin/category once at mount. The query text itself is
-  // deliberately NOT restored — it should reset on a fresh app launch, and
-  // React state already keeps it intact when just switching tabs within the
-  // same running session (this screen stays mounted, it doesn't remount).
+  // Load remembered plugin/category/zero-seeder/grouping/search-in settings once at mount. The
+  // query text itself is deliberately NOT restored — it should reset on a
+  // fresh app launch, and React state already keeps it intact when just
+  // switching tabs within the same running session (this screen stays
+  // mounted, it doesn't remount).
   useEffect(() => {
     (async () => {
       try {
         const prefs = await storageService.getPreferences();
         if (prefs.lastSearchPlugin) setPlugin(prefs.lastSearchPlugin);
         if (prefs.lastSearchCategory) setCategory(prefs.lastSearchCategory);
+        if (prefs.searchHideZeroSeeders) setHideZeroSeeders(true);
+        // Absent means on (the default); only an explicit opt-out turns it off.
+        if (prefs.searchGroupDuplicates === false) setGroupDuplicates(false);
+        if (prefs.searchInMode === 'names') setSearchInMode('names');
       } catch {
         // ignore — defaults are fine
       }
@@ -374,10 +421,28 @@ export default function SearchScreen() {
     });
   }, []);
 
-  // Sort the live results client-side; qBittorrent's search API doesn't sort.
-  // De-duplicate by fileUrl first so the list keyExtractor can rely on a
-  // stable, unique key instead of the array index.
-  const sortedResults = useMemo(() => {
+  // Everything the #266 filter panel contributes, as `filterSearchResults`
+  // options: the "names only" scope (against the submitted pattern, not the
+  // live query box) plus the session-only text/seeders/size filters.
+  const contentFilterOptions = useMemo<SearchFilterOptions>(
+    () => ({
+      nameTerms: searchInMode === 'names' ? submittedPattern : undefined,
+      ...draftToFilterOptions(filterDraft),
+    }),
+    [searchInMode, submittedPattern, filterDraft],
+  );
+  // The funnel button shows an "active" dot only while something is actually
+  // filtering the results. A saved "names only" scope with no search to apply
+  // it to filters nothing, so it doesn't light the dot.
+  const filtersActive = hasActiveFilters(contentFilterOptions);
+
+  // Filter, group, then sort, the live results client-side; qBittorrent's search
+  // API does none of it. Pipeline: dedupe → tracker chips → panel filters (#266) →
+  // hide zero seeders (#270) → group duplicates (#267) → sort. De-duplicate by
+  // fileUrl first so every result lands in exactly one list row. Grouping runs
+  // AFTER filtering (a filtered-out copy never shows up as a source) and BEFORE
+  // sorting (each group sorts by its primary — the member with the most seeders).
+  const filteredResults = useMemo(() => {
     const seenUrls = new Set<string>();
     const deduped = results.filter((r) => {
       if (seenUrls.has(r.fileUrl)) return false;
@@ -385,11 +450,35 @@ export default function SearchScreen() {
       return true;
     });
     // Empty selection means "no tracker filter" — show everything.
-    const filtered =
+    const trackerFiltered =
       selectedTrackers.size === 0
         ? deduped
         : deduped.filter((r) => selectedTrackers.has(resultTrackerLabel(r, isAggregatedSource)));
-    filtered.sort((a, b) => {
+    return filterSearchResults(trackerFiltered, { ...contentFilterOptions, hideZeroSeeders });
+  }, [results, selectedTrackers, isAggregatedSource, hideZeroSeeders, contentFilterOptions]);
+
+  // Info hashes the server confirmed for results that look like duplicates
+  // (qBit 5.2+ only; a no-op elsewhere — those fall back to the name+size guess).
+  const resolvedHashes = useSearchHashResolver({
+    results: filteredResults,
+    jobId,
+    enabled: groupDuplicates,
+    features,
+    isAggregatedSource,
+  });
+
+  // One entry per list row. With grouping off every result is a group of one,
+  // so the list is exactly the sorted, filtered results as before.
+  const listItems = useMemo<SearchResultGroup[]>(() => {
+    const items = groupDuplicates
+      ? groupSearchResults(filteredResults, resolvedHashes)
+      : singletonGroups(filteredResults);
+    items.sort((groupA, groupB) => {
+      const a = groupA.primary;
+      const b = groupB.primary;
+      // Quality (#268) keeps unknown-quality results last in BOTH directions,
+      // so it can't use the negate-for-desc scheme below.
+      if (sortBy === 'quality') return compareByQuality(a, b, sortDirection);
       let cmp = 0;
       switch (sortBy) {
         case 'seeders':
@@ -417,8 +506,100 @@ export default function SearchScreen() {
       }
       return sortDirection === 'asc' ? cmp : -cmp;
     });
-    return filtered;
-  }, [results, selectedTrackers, isAggregatedSource, sortBy, sortDirection]);
+    return items;
+  }, [filteredResults, groupDuplicates, resolvedHashes, sortBy, sortDirection]);
+
+  // Header count: `total` is the server's raw count, so with the zero-seeder
+  // or panel filters on, subtract the loaded results they hide. (Computed from
+  // `results` rather than the list so the tracker filter keeps not affecting it,
+  // and counting every result, not rows, so grouping doesn't change it.)
+  const visibleTotal = useMemo(() => {
+    const hidden =
+      results.length -
+      filterSearchResults(results, { ...contentFilterOptions, hideZeroSeeders }).length;
+    return Math.max(0, total - hidden);
+  }, [results, total, hideZeroSeeders, contentFilterOptions]);
+
+  const handleToggleHideZeroSeeders = useCallback(async (value: boolean) => {
+    haptics.light();
+    setHideZeroSeeders(value);
+    try {
+      const prefs = await storageService.getPreferences();
+      await storageService.savePreferences({ ...prefs, searchHideZeroSeeders: value });
+    } catch (err: unknown) {
+      // The in-memory toggle still works; only persistence across launches is lost.
+      clogWarn('SEARCH', `Failed to save hide-zero-seeders preference: ${getErrorMessage(err)}`);
+    }
+  }, []);
+
+  const handleToggleGroupDuplicates = useCallback(async (value: boolean) => {
+    haptics.light();
+    setGroupDuplicates(value);
+    try {
+      const prefs = await storageService.getPreferences();
+      await storageService.savePreferences({ ...prefs, searchGroupDuplicates: value });
+    } catch (err: unknown) {
+      // The in-memory toggle still works; only persistence across launches is lost.
+      clogWarn('SEARCH', `Failed to save group-duplicates preference: ${getErrorMessage(err)}`);
+    }
+  }, []);
+
+  const handleSearchInChange = useCallback(async (mode: SearchInMode) => {
+    haptics.light();
+    setSearchInMode(mode);
+    try {
+      const prefs = await storageService.getPreferences();
+      await storageService.savePreferences({ ...prefs, searchInMode: mode });
+    } catch (err: unknown) {
+      // The in-memory choice still works; only persistence across launches is lost.
+      clogWarn('SEARCH', `Failed to save search-in preference: ${getErrorMessage(err)}`);
+    }
+  }, []);
+
+  const patchStagedDraft = useCallback((patch: Partial<SearchFilterDraft>) => {
+    setStagedDraft((prev) => ({ ...prev, ...patch }));
+  }, []);
+
+  // Panel's "Clear filters": resets everything — the staged fields, what is
+  // currently applied, and the "Search in" scope — right away, so the results
+  // and the funnel's active dot never disagree with an empty-looking panel.
+  const handleClearPanel = useCallback(() => {
+    haptics.light();
+    setStagedDraft(EMPTY_SEARCH_FILTER_DRAFT);
+    setStagedSearchIn('everywhere');
+    setFilterDraft(EMPTY_SEARCH_FILTER_DRAFT);
+    // Deliberately emptied for this search — don't re-seed the box on next open.
+    prefilledPatternRef.current = submittedPattern;
+    if (searchInMode !== 'everywhere') void handleSearchInChange('everywhere');
+  }, [submittedPattern, searchInMode, handleSearchInChange]);
+
+  const handleClearFilters = useCallback(() => {
+    haptics.light();
+    setFilterDraft(EMPTY_SEARCH_FILTER_DRAFT);
+  }, []);
+
+  // Closing without Apply discards whatever was staged.
+  const closeFilterPanel = useCallback(() => {
+    Keyboard.dismiss();
+    setShowFilterPanel(false);
+  }, []);
+
+  const handleApplyFilters = useCallback(() => {
+    haptics.light();
+    setFilterDraft(stagedDraft);
+    // The box was seeded (or deliberately emptied) for this search — don't
+    // seed it again on the next open.
+    prefilledPatternRef.current = submittedPattern;
+    if (stagedSearchIn !== searchInMode) void handleSearchInChange(stagedSearchIn);
+    closeFilterPanel();
+  }, [
+    stagedDraft,
+    stagedSearchIn,
+    searchInMode,
+    submittedPattern,
+    handleSearchInChange,
+    closeFilterPanel,
+  ]);
 
   // The FlatList unmounts whenever the (filtered) result set is empty — the
   // empty state has no scrollable surface, so no onScroll event could ever
@@ -426,7 +607,7 @@ export default function SearchScreen() {
   // filter that matches nothing leaves the search bar and every filter chip
   // stranded off-screen with no way to recover.
   useEffect(() => {
-    if (sortedResults.length === 0 && !isHeaderVisible.current) {
+    if (listItems.length === 0 && !isHeaderVisible.current) {
       isHeaderVisible.current = true;
       lastScrollY.current = 0;
       Animated.timing(headerTranslateY, {
@@ -435,7 +616,7 @@ export default function SearchScreen() {
         useNativeDriver: true,
       }).start();
     }
-  }, [sortedResults.length, headerTranslateY]);
+  }, [listItems.length, headerTranslateY]);
 
   // ────────────────────────────────────────────────── actions ──────────────
 
@@ -451,7 +632,13 @@ export default function SearchScreen() {
       haptics.medium();
       try {
         setSelectedTrackers(new Set());
+        // Filters belong to one result set; the persisted "Search in" scope stays.
+        setFilterDraft(EMPTY_SEARCH_FILTER_DRAFT);
+        prefilledPatternRef.current = '';
         setIsAggregatedSource(false);
+        // Adopted once the new job's id lands (see the jobId effect below), so
+        // the previous results keep matching their own pattern until then.
+        pendingPatternRef.current = pattern;
         await start(pattern, plugin, category);
         const prefs = await storageService.getPreferences();
         await storageService.savePreferences({
@@ -467,6 +654,15 @@ export default function SearchScreen() {
   );
 
   const handleSubmit = useCallback(() => runSearch(query.trim()), [query, runSearch]);
+
+  // A new job id means `start` succeeded; only then does the pattern it was
+  // started with become the one "names only" filters against. (`start` reports
+  // failure through `error` rather than throwing, and the first results fetch
+  // is awaited inside it, so setting this any other way either misfilters the
+  // old results after a failed start or the new ones for a render.)
+  useEffect(() => {
+    if (jobId !== null) setSubmittedPattern(pendingPatternRef.current);
+  }, [jobId]);
 
   // Cross-tab handoff: e.g. RSS article "Search for This" navigates here with
   // ?q=<title>&ts=<nonce> to pre-fill and immediately run a search. Guarded by
@@ -524,15 +720,23 @@ export default function SearchScreen() {
   // results through search/downloadTorrent (see the isMagnet branch below),
   // which cart checkout (torrents/add only, see app/torrents/add.tsx)
   // deliberately does not use.
+  //
+  // `extras` is only ever passed when adding a whole group (#267); for a single
+  // result it is absent and nothing below changes.
   const instantAddResult = useCallback(
-    async (result: SearchResult) => {
+    async (result: SearchResult, extras?: GroupAddExtras) => {
       if (!result.fileUrl) return;
-      setPendingAddUrl(result.fileUrl);
+      setPendingAddUrl(extras?.pendingUrl ?? result.fileUrl);
       try {
         const prefs = await storageService.getPreferences();
         const trackerTag = prefs.autoCategorizeByTracker
           ? resultTrackerLabel(result, isAggregatedSource)
           : '';
+        // Checked BEFORE the add, so a torrent the client already had is never
+        // mistaken for the one we are about to add.
+        const startTrackerTopUp = extras?.trackerFollowUp
+          ? await prepareTrackerTopUp(extras.trackerFollowUp, activeTagPollsRef.current)
+          : null;
 
         // Non-magnet result URLs from direct tracker plugins often need the
         // plugin's context to resolve (login cookies, magnet extraction from
@@ -568,6 +772,7 @@ export default function SearchScreen() {
             trackerTag ? { tags: [trackerTag] } : undefined,
           );
         }
+        startTrackerTopUp?.();
         haptics.success();
         showToast(t('screens.search.addedToast'), 'success');
       } catch (err: unknown) {
@@ -586,26 +791,61 @@ export default function SearchScreen() {
   // choice the same way the existing magnet-deep-link handoff does. Falls
   // back to instantAddResult if preferences can't be read or navigation
   // fails, so a storage hiccup never leaves the + button doing nothing.
+  //
+  // For a group (#267) `result.fileUrl` may be a merged magnet carrying every
+  // source's trackers, and `extras.trackerFollowUp` asks for the other sources'
+  // trackers to be attached once the torrent exists. The follow-up waits for the
+  // torrent by ID, so it works the same whether the add happens instantly or
+  // after the user finishes the dialogue; if they abandon it, the wait just ends.
   const handleAddResult = useCallback(
-    async (result: SearchResult) => {
+    async (result: SearchResult, extras?: GroupAddExtras) => {
       if (!result.fileUrl) return;
       try {
         const prefs = await storageService.getPreferences();
         if (!getSearchAddOpensDialogue(prefs)) {
-          await instantAddResult(result);
+          await instantAddResult(result, extras);
           return;
         }
         const variant = getAddTorrentDialogueVariant(prefs);
+        const startTrackerTopUp = extras?.trackerFollowUp
+          ? await prepareTrackerTopUp(extras.trackerFollowUp, activeTagPollsRef.current)
+          : null;
         if (variant === 'full') {
           router.push({ pathname: '/torrents/add', params: { sourceUrl: result.fileUrl } });
         } else {
           router.push({ pathname: '/', params: { sourceUrl: result.fileUrl } });
         }
+        startTrackerTopUp?.();
       } catch {
-        await instantAddResult(result);
+        await instantAddResult(result, extras);
       }
     },
     [instantAddResult, router],
+  );
+
+  // + on a grouped row (#267): add every source of the torrent at once — see
+  // planGroupAdd for what that means for magnets vs .torrent links.
+  const handleAddGroup = useCallback(
+    async (group: SearchResultGroup) => {
+      const plan = planGroupAdd(group, resolvedHashes);
+      await handleAddResult(plan.result, {
+        pendingUrl: group.primary.fileUrl,
+        trackerFollowUp: plan.trackerFollowUp,
+      });
+    },
+    [handleAddResult, resolvedHashes],
+  );
+
+  // "Add now" in the long-press sheet of a grouped row: same, without the dialogue.
+  const instantAddGroup = useCallback(
+    async (group: SearchResultGroup) => {
+      const plan = planGroupAdd(group, resolvedHashes);
+      await instantAddResult(plan.result, {
+        pendingUrl: group.primary.fileUrl,
+        trackerFollowUp: plan.trackerFollowUp,
+      });
+    },
+    [instantAddResult, resolvedHashes],
   );
 
   const handleToggleCart = useCallback(
@@ -622,9 +862,10 @@ export default function SearchScreen() {
     [cart, isAggregatedSource],
   );
 
-  const handleLongPressResult = useCallback((result: SearchResult) => {
+  const handleLongPressResult = useCallback((result: SearchResult, group?: SearchResultGroup) => {
     haptics.medium();
     setActionResult(result);
+    setActionGroup(group ?? null);
   }, []);
 
   const handleOpenLink = useCallback(
@@ -669,6 +910,8 @@ export default function SearchScreen() {
   const onClearQuery = () => {
     setQuery('');
     setSelectedTrackers(new Set());
+    setFilterDraft(EMPTY_SEARCH_FILTER_DRAFT);
+    prefilledPatternRef.current = '';
     setIsAggregatedSource(false);
     if (jobId !== null) void reset();
   };
@@ -681,7 +924,8 @@ export default function SearchScreen() {
       {
         label: t('screens.search.addNow'),
         icon: 'add-circle-outline',
-        onPress: () => void instantAddResult(actionResult),
+        onPress: () =>
+          void (actionGroup ? instantAddGroup(actionGroup) : instantAddResult(actionResult)),
       },
       {
         label: resultInCart ? t('screens.search.removeFromCart') : t('screens.search.addToCart'),
@@ -718,9 +962,11 @@ export default function SearchScreen() {
     return items;
   }, [
     actionResult,
+    actionGroup,
     cart,
     handleToggleCart,
     instantAddResult,
+    instantAddGroup,
     handleCopyUrl,
     handleOpenLink,
     handleShareUrl,
@@ -789,18 +1035,57 @@ export default function SearchScreen() {
         />
       );
     }
-    if (results.length > 0 && selectedTrackers.size > 0) {
-      // Raw results exist, but the tracker filter excludes all of them.
-      return (
-        <EmptyState
-          style={{ backgroundColor: colors.background }}
-          icon="funnel-outline"
-          title={t('screens.search.noTrackerResults')}
-          actionLabel={t('screens.search.allTrackers')}
-          actionIcon="close-circle-outline"
-          onAction={() => setSelectedTrackers(new Set())}
-        />
-      );
+    if (results.length > 0) {
+      // Raw results exist but the pipeline (see filteredResults) emptied the
+      // list. Blame the first stage that eliminates everything, in pipeline
+      // order, so the empty state names the filter the user can actually undo.
+      const trackerFiltered =
+        selectedTrackers.size === 0
+          ? results
+          : results.filter((r) => selectedTrackers.has(resultTrackerLabel(r, isAggregatedSource)));
+      if (trackerFiltered.length === 0) {
+        return (
+          <EmptyState
+            style={{ backgroundColor: colors.background }}
+            icon="funnel-outline"
+            title={t('screens.search.noTrackerResults')}
+            actionLabel={t('screens.search.allTrackers')}
+            actionIcon="close-circle-outline"
+            onAction={() => setSelectedTrackers(new Set())}
+          />
+        );
+      }
+      const panelFiltered = filterSearchResults(trackerFiltered, contentFilterOptions);
+      if (panelFiltered.length === 0 && hasActiveFilters(contentFilterOptions)) {
+        // Clear whatever the user typed; if only the saved "names only" scope
+        // is left doing the filtering, relax that instead (an explicit tap,
+        // so persisting the change is what they asked for).
+        const hasDraftFilters = hasActiveFilters({ ...contentFilterOptions, nameTerms: undefined });
+        return (
+          <EmptyState
+            style={{ backgroundColor: colors.background }}
+            icon="funnel-outline"
+            title={t('screens.search.noFilterResults')}
+            actionLabel={t('screens.search.clearFilters')}
+            actionIcon="close-circle-outline"
+            onAction={() =>
+              hasDraftFilters ? handleClearFilters() : void handleSearchInChange('everywhere')
+            }
+          />
+        );
+      }
+      if (hideZeroSeeders && filterSearchResults(panelFiltered, { hideZeroSeeders }).length === 0) {
+        return (
+          <EmptyState
+            style={{ backgroundColor: colors.background }}
+            icon="eye-off-outline"
+            title={t('screens.search.allResultsZeroSeeders')}
+            actionLabel={t('screens.search.showAllResults')}
+            actionIcon="eye-outline"
+            onAction={() => void handleToggleHideZeroSeeders(false)}
+          />
+        );
+      }
     }
     if (status === 'Stopped' && total === 0) {
       return (
@@ -856,6 +1141,8 @@ export default function SearchScreen() {
                   ]}
                   onPress={() => {
                     haptics.light();
+                    // Only one of the sort menu / filter panel is open at a time.
+                    setShowFilterPanel(false);
                     setShowSortMenu(!showSortMenu);
                   }}
                   activeOpacity={0.7}
@@ -866,6 +1153,53 @@ export default function SearchScreen() {
                     size={18}
                     color={showSortMenu ? colors.primary : colors.text}
                   />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.iconButton,
+                    {
+                      backgroundColor: showFilterPanel ? colors.primaryOpac : colors.background,
+                      borderColor: colors.surfaceOutline,
+                    },
+                  ]}
+                  onPress={() => {
+                    haptics.light();
+                    setShowSortMenu(false);
+                    if (showFilterPanel) {
+                      closeFilterPanel();
+                    } else {
+                      // Stage a copy of the applied filters. The filter box is
+                      // seeded with the current search the first time the panel
+                      // opens for it; the user refines from there and taps Apply.
+                      const seed =
+                        submittedPattern &&
+                        prefilledPatternRef.current !== submittedPattern &&
+                        filterDraft.filterText === ''
+                          ? submittedPattern
+                          : filterDraft.filterText;
+                      setStagedDraft({ ...filterDraft, filterText: seed });
+                      setStagedSearchIn(searchInMode);
+                      setShowFilterPanel(true);
+                    }
+                  }}
+                  activeOpacity={0.7}
+                  accessibilityLabel={t('screens.search.filterResults')}
+                  accessibilityState={{ expanded: showFilterPanel, selected: filtersActive }}
+                >
+                  <Ionicons
+                    name={filtersActive || showFilterPanel ? 'funnel' : 'funnel-outline'}
+                    size={18}
+                    color={filtersActive || showFilterPanel ? colors.primary : colors.text}
+                  />
+                  {filtersActive && (
+                    <View
+                      style={[
+                        styles.filterActiveDot,
+                        { backgroundColor: colors.primary, borderColor: colors.background },
+                      ]}
+                    />
+                  )}
                 </TouchableOpacity>
 
                 <View
@@ -1061,14 +1395,14 @@ export default function SearchScreen() {
                       <>
                         <ActivityIndicator size="small" color={colors.primary} />
                         <Text style={[styles.statusBannerText, { color: colors.textSecondary }]}>
-                          {t('screens.search.runningCount', { count: total })}
+                          {t('screens.search.runningCount', { count: visibleTotal })}
                         </Text>
                       </>
                     ) : (
                       <>
                         <Ionicons name="checkmark-circle" size={16} color={colors.success} />
                         <Text style={[styles.statusBannerText, { color: colors.textSecondary }]}>
-                          {t('screens.search.foundCount', { count: total })}
+                          {t('screens.search.foundCount', { count: visibleTotal })}
                         </Text>
                       </>
                     )}
@@ -1165,29 +1499,116 @@ export default function SearchScreen() {
                       </TouchableOpacity>
                     );
                   })}
+                  <View style={[styles.sortDivider, { backgroundColor: colors.surfaceOutline }]} />
+                  {/* Filter toggle — deliberately does not close the menu. */}
+                  <TouchableOpacity
+                    style={styles.sortToggleRow}
+                    onPress={() => void handleToggleHideZeroSeeders(!hideZeroSeeders)}
+                    activeOpacity={0.7}
+                    accessible={false}
+                  >
+                    <Ionicons
+                      name="eye-off-outline"
+                      size={18}
+                      color={isDark ? colors.textSecondary : colors.text}
+                    />
+                    <Text
+                      style={[
+                        styles.sortOptionText,
+                        { color: isDark ? colors.textSecondary : colors.text },
+                      ]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.75}
+                    >
+                      {t('screens.search.hideZeroSeeders')}
+                    </Text>
+                    <Switch
+                      value={hideZeroSeeders}
+                      onValueChange={(value) => void handleToggleHideZeroSeeders(value)}
+                      trackColor={{ false: colors.surfaceOutline, true: colors.primary }}
+                      ios_backgroundColor={colors.surfaceOutline}
+                      accessibilityRole="switch"
+                      accessibilityLabel={t('screens.search.hideZeroSeeders')}
+                      accessibilityState={{ checked: hideZeroSeeders }}
+                    />
+                  </TouchableOpacity>
+                  {/* Group duplicates (#267) — same shape as the toggle above. */}
+                  <TouchableOpacity
+                    style={styles.sortToggleRow}
+                    onPress={() => void handleToggleGroupDuplicates(!groupDuplicates)}
+                    activeOpacity={0.7}
+                    accessible={false}
+                  >
+                    <Ionicons
+                      name="layers-outline"
+                      size={18}
+                      color={isDark ? colors.textSecondary : colors.text}
+                    />
+                    <Text
+                      style={[
+                        styles.sortOptionText,
+                        { color: isDark ? colors.textSecondary : colors.text },
+                      ]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.75}
+                    >
+                      {t('screens.search.groupDuplicates')}
+                    </Text>
+                    <Switch
+                      value={groupDuplicates}
+                      onValueChange={(value) => void handleToggleGroupDuplicates(value)}
+                      trackColor={{ false: colors.surfaceOutline, true: colors.primary }}
+                      ios_backgroundColor={colors.surfaceOutline}
+                      accessibilityRole="switch"
+                      accessibilityLabel={t('screens.search.groupDuplicates')}
+                      accessibilityState={{ checked: groupDuplicates }}
+                    />
+                  </TouchableOpacity>
                 </View>
+              )}
+
+              {/* Filter panel (#266) — floats like the sort dropdown. */}
+              {showFilterPanel && (
+                <SearchFilterPanel
+                  draft={stagedDraft}
+                  onChange={patchStagedDraft}
+                  searchIn={stagedSearchIn}
+                  onSearchInChange={setStagedSearchIn}
+                  onClear={handleClearPanel}
+                  onApply={handleApplyFilters}
+                />
               )}
             </View>
           </TouchableWithoutFeedback>
         </Animated.View>
 
+        {/* Tapping anywhere outside the open filter panel closes it (and the
+            keyboard). Sits above the results list but below the header, so
+            the search row, chips and panel itself stay interactive. */}
+        {showFilterPanel && (
+          <Pressable style={styles.filterBackdrop} onPress={closeFilterPanel} accessible={false} />
+        )}
+
         {/* Results list / empty state */}
-        {sortedResults.length === 0 ? (
+        {listItems.length === 0 ? (
           renderEmptyState()
         ) : (
           <FlatList
-            data={sortedResults}
-            keyExtractor={(item) => item.fileUrl}
+            data={listItems}
+            keyExtractor={(item) => item.id}
             renderItem={({ item }) => (
-              <SearchResultRow
-                result={item}
+              <SearchResultGroupRow
+                group={item}
                 isAggregatedSource={isAggregatedSource}
-                onAdd={handleAddResult}
+                onAddGroup={handleAddGroup}
+                onAddResult={handleAddResult}
                 onLongPress={handleLongPressResult}
                 onOpenLink={handleOpenLink}
                 onCopyUrl={handleCopyUrl}
-                isAdding={pendingAddUrl === item.fileUrl}
-                inCart={cart.has(item.fileUrl)}
+                addingUrl={pendingAddUrl}
+                isInCart={cart.has}
                 onToggleCart={handleToggleCart}
               />
             )}
@@ -1236,7 +1657,10 @@ export default function SearchScreen() {
 
       <ActionMenu
         visible={actionResult !== null}
-        onClose={() => setActionResult(null)}
+        onClose={() => {
+          setActionResult(null);
+          setActionGroup(null);
+        }}
         items={actionItems}
       />
 
@@ -1382,6 +1806,24 @@ const styles = StyleSheet.create({
   stopChipText: {
     ...typography.captionSemibold,
   },
+  filterActiveDot: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    borderWidth: 1.5,
+  },
+  // Full-screen catcher behind the header (zIndex 1000) and above the list.
+  filterBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 900,
+  },
   // True floating popup anchored under the sort button (left side of the
   // search row: 8 card padding + 42 button + 4 gap), overlaying the chip
   // rows instead of sitting inline below them — matches the Torrents tab.
@@ -1389,7 +1831,11 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 54,
     left: spacing.md,
-    minWidth: 200,
+    // Fixed width, not minWidth: with a content-sized width the toggle labels
+    // measured wider than the dropdown, wrapped to two lines, and the last row
+    // got clipped by `overflow: hidden`.
+    width: 300,
+    maxWidth: '100%',
     borderRadius: borderRadius.large,
     borderWidth: 0.5,
     ...shadows.large,
@@ -1406,6 +1852,16 @@ const styles = StyleSheet.create({
   sortOptionText: {
     flex: 1,
     fontSize: 15,
+  },
+  sortDivider: {
+    height: StyleSheet.hairlineWidth,
+  },
+  sortToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
   },
   center: {
     flex: 1,

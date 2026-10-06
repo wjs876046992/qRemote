@@ -49,6 +49,19 @@ export interface ServerConfig {
   /** qBittorrent API key, sent as `Authorization: Bearer <apiKey>` (in-memory only; stored in SecureStore). */
   apiKey?: string;
 
+  /**
+   * When true, this server is a qui Client Proxy (#272): requests go to `<basePath>/proxy/<quiProxyKey>`
+   * and there is no qBittorrent login. `host`/`port`/`useHttps`/`basePath` hold the proxy URL's own
+   * address and qui base path — see utils/quiProxy.ts. Takes precedence over `useApiKey`/`bypassAuth`.
+   */
+  useQuiProxy?: boolean;
+  /**
+   * qui Client API key — the `<key>` segment of the proxy URL (in-memory only; stored in SecureStore).
+   * It appears in request URLs, so never log a URL without utils/quiProxy.ts `redactQuiProxyKey`.
+   * A fallback endpoint reuses this same key (only its host/port/https/base path differ).
+   */
+  quiProxyKey?: string;
+
   /** Ionicons glyph name used for this server's badge (see constants/serverIcons.ts). Falls back to DEFAULT_SERVER_ICON when unset. */
   icon?: string;
   /** Hex color for the server's icon badge. Falls back to utils/server.ts avatarColor(name) when unset. */
@@ -463,6 +476,28 @@ export interface Tracker {
   num_downloaded: number;
   msg: string;
 }
+
+/**
+ * Identifiers carried by a torrents/fetchMetadata response (qBit 5.2+ / WebAPI ≥ 2.11.9).
+ * Each is omitted when the server sent nothing or an empty string (a v1-only torrent
+ * has no v2 hash and vice versa).
+ */
+export interface TorrentMetadataIds {
+  /** `infohash_v1` — the SHA-1 info hash; what a magnet's `xt=urn:btih:` carries. */
+  infohashV1?: string;
+  /** `infohash_v2` — the SHA-256 info hash of a v2/hybrid torrent. */
+  infohashV2?: string;
+  /** `hash` — the torrent ID qBittorrent keys its own endpoints by (v1 hash, or the truncated v2 hash). */
+  hash?: string;
+}
+
+/**
+ * Outcome of one torrents/fetchMetadata call. The endpoint reports progress through the
+ * HTTP status: 202 while the metadata is still being downloaded, 200 once it is available.
+ */
+export type TorrentMetadataResult =
+  | ({ status: 'pending' } & TorrentMetadataIds)
+  | ({ status: 'ready'; trackers: string[] } & TorrentMetadataIds);
 
 export interface WebSeed {
   url: string;

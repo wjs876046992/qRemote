@@ -36,6 +36,7 @@ export default function AppearanceSettingsScreen() {
     { label: 'Français', value: 'fr', icon: 'language-outline' },
     { label: 'Deutsch', value: 'de', icon: 'language-outline' },
     { label: 'Русский', value: 'ru', icon: 'language-outline' },
+    { label: 'Polski', value: 'pl', icon: 'language-outline' },
   ];
 
   const loadPreferences = async () => {

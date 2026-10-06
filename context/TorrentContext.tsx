@@ -169,6 +169,10 @@ export function TorrentProvider({ children }: { children: ReactNode }) {
     queryFn: syncQueryFn,
     refetchInterval: isAppActive ? 2000 : false,
     enabled: isConnected,
+    // This poll already refetches every 2s — a query-level retry on top of
+    // the client's own retry/backoff (services/api/client.ts) is how a dead
+    // server turned into a ~2 minute hang instead of a bounded failure (#254).
+    retry: 0,
   });
 
   // Mark initial load complete once we receive data (persists across disconnects)

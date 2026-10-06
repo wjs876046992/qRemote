@@ -27,8 +27,9 @@ import { APP_VERSION } from '@/utils/version';
 import { getConnectivityLog, formatConnectivityLog } from '@/services/connectivity-log';
 import { logsApi } from '@/services/api/logs';
 import { apiClient } from '@/services/api/client';
-import { getErrorMessage } from '@/utils/error';
+import { getErrorMessage, isTlsRejection } from '@/utils/error';
 import { CustomHeaderPair, sanitizeCustomHeaders } from '@/utils/customHeaders';
+import { redactQuiProxyKey } from '@/utils/quiProxy';
 import { isLoginBodyFail, isLoginSuccess } from '@/utils/login-response';
 
 // ---------------------------------------------------------------------------
@@ -65,6 +66,67 @@ const diagnosticHttp = axios.create({
   // same as fetch() never throwing based on HTTP status.
   validateStatus: () => true,
 });
+
+/** Minimal fetch()-`Response`-shaped result for the REACH probes below —
+ * only `status` is ever read off it. */
+interface ReachProbeResponse {
+  status: number;
+}
+
+/**
+ * Raw-XHR mirror of `fetch(url, { method, headers, signal })`, used only by
+ * the REACH probes (Feature 1 "Ping Host" and Step 1 of the full run below).
+ * Deliberately not routed through `diagnosticHttp` or the app's `apiClient`
+ * — the REACH step exists specifically to stay independent of the app's own
+ * HTTP stack (see this file's header comment).
+ *
+ * It replaces a plain `fetch()` call because RN's `whatwg-fetch` polyfill
+ * collapses every network-level failure — including a rejected TLS
+ * certificate — into a bare `TypeError('Network request failed')`
+ * (fetch.umd.js), discarding the native NSError's localizedDescription. That
+ * made the certificate-specific guidance below unreachable: every REACH
+ * failure looked like "Network request failed" regardless of cause. A raw
+ * XHR keeps the detail — RN's XHR bridge puts it in the response body on
+ * error — which is exactly how `utils/error.ts`'s `isTlsRejection` (also
+ * used by `services/api/client.ts`) tells a TLS rejection apart from a
+ * genuinely unreachable host.
+ */
+function reachProbeRequest(
+  url: string,
+  method: 'HEAD' | 'GET',
+  headers: Record<string, string>,
+  signal: AbortSignal,
+): Promise<ReachProbeResponse> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new Error('Timed out after 15s'));
+      return;
+    }
+    const xhr = new XMLHttpRequest();
+    const onAbort = () => xhr.abort();
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    signal.addEventListener('abort', onAbort);
+    xhr.open(method, url, true);
+    Object.entries(headers).forEach(([key, value]) => xhr.setRequestHeader(key, value));
+    xhr.onload = () => {
+      cleanup();
+      resolve({ status: xhr.status });
+    };
+    xhr.onabort = () => {
+      cleanup();
+      reject(new Error('Timed out after 15s'));
+    };
+    xhr.onerror = () => {
+      cleanup();
+      // Mirror axios's error shape (`error.request.response`) so
+      // isTlsRejection can read the native error description straight off it.
+      const err = new Error('Network request failed') as Error & { request?: XMLHttpRequest };
+      err.request = xhr;
+      reject(err);
+    };
+    xhr.send();
+  });
+}
 
 /** Reads the Set-Cookie value(s) off an axios response's headers, tolerant of
  * the array shape (duplicate headers) and casing quirks — mirrors the proven
@@ -109,6 +171,14 @@ export interface SuperDebugPanelProps {
   /** Optional API key auth fields — when set, login/cookie steps are skipped and a Bearer header is sent instead. */
   useApiKey?: boolean;
   apiKey?: string;
+  /**
+   * Optional URL path appended to the origin. In qui mode (#272) this is
+   * `/<qui base>/proxy/<key>` — it embeds the secret key, so every log line and
+   * report this panel produces is redacted (see `redactOutput`).
+   */
+  basePath?: string;
+  /** qui Client Proxy (#272): login/cookie steps are skipped (qui's login is a no-op) and no Bearer header is sent. */
+  useQuiProxy?: boolean;
   /** Optional proxy Basic Auth fields — when absent, no Authorization header is sent. */
   useBasicAuth?: boolean;
   basicAuthUsername?: string;
@@ -160,6 +230,8 @@ export function SuperDebugPanel({
   bypassAuth,
   useApiKey = false,
   apiKey = '',
+  basePath = '',
+  useQuiProxy = false,
   useBasicAuth = false,
   basicAuthUsername = '',
   basicAuthPassword = '',
@@ -190,13 +262,35 @@ export function SuperDebugPanel({
     const clean = sanitizeHost(host);
     const portNum = port.trim() ? parseInt(port, 10) : undefined;
     const portPart = portNum && portNum > 0 && !isNaN(portNum) ? `:${portNum}` : '';
-    return `${protocol}://${clean}${portPart}`;
-  }, [host, port, useHttps]);
+    const trimmedPath = basePath.trim().replace(/\/+$/, '');
+    const pathPart = trimmedPath
+      ? trimmedPath.startsWith('/')
+        ? trimmedPath
+        : `/${trimmedPath}`
+      : '';
+    return `${protocol}://${clean}${portPart}${pathPart}`;
+  }, [host, port, useHttps, basePath]);
+
+  /** Mask a qui proxy key anywhere in text that is displayed, copied or exported. */
+  const redactOutput = useCallback(
+    (text: string): string => (useQuiProxy ? redactQuiProxyKey(text) : text),
+    [useQuiProxy],
+  );
+
+  /** The auth-method label used in the report headers. */
+  const authModeLabel = useQuiProxy
+    ? 'quiProxy'
+    : useApiKey
+      ? 'apiKey'
+      : bypassAuth
+        ? 'none'
+        : 'password';
 
   /** Build the Authorization header value: API key (Bearer) takes precedence
    * over proxy Basic Auth, mirroring services/api/client.ts's interceptor. */
   const buildAuthHeader = useCallback((): string | null => {
-    if (useApiKey && apiKey.trim()) {
+    // qui authenticates by the key in the URL path — never a Bearer header.
+    if (!useQuiProxy && useApiKey && apiKey.trim()) {
       return `Bearer ${apiKey.trim()}`;
     }
     if (!useBasicAuth || !basicAuthUsername.trim()) return null;
@@ -224,7 +318,7 @@ export function SuperDebugPanel({
       b64 += i + 2 < bytes.length ? BASE64[b2 & 63] : '=';
     }
     return 'Basic ' + b64;
-  }, [useApiKey, apiKey, useBasicAuth, basicAuthUsername, basicAuthPassword]);
+  }, [useQuiProxy, useApiKey, apiKey, useBasicAuth, basicAuthUsername, basicAuthPassword]);
 
   /** Serialized so an inline `customHeaders` array prop doesn't churn the
    * callbacks below on every render. */
@@ -256,6 +350,8 @@ export function SuperDebugPanel({
       password,
       useApiKey,
       apiKey,
+      basePath,
+      useQuiProxy,
       useBasicAuth,
       basicAuthUsername,
       basicAuthPassword,
@@ -270,6 +366,8 @@ export function SuperDebugPanel({
     password,
     useApiKey,
     apiKey,
+    basePath,
+    useQuiProxy,
     useBasicAuth,
     basicAuthUsername,
     basicAuthPassword,
@@ -282,14 +380,14 @@ export function SuperDebugPanel({
         id: ++idRef.current,
         timestamp: Date.now(),
         step,
-        message,
-        detail,
+        message: redactOutput(message),
+        detail: detail === undefined ? undefined : redactOutput(detail),
         status,
       };
       setLog((prev) => [...prev, entry]);
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 50);
     },
-    [],
+    [redactOutput],
   );
 
   const formatTime = (ts: number): string => {
@@ -325,21 +423,13 @@ export function SuperDebugPanel({
       const authHeader = buildAuthHeader();
       const reachHeaders: Record<string, string> = { ...buildCustomHeaders() };
       if (authHeader) reachHeaders['Authorization'] = authHeader;
-      let response: Response;
+      let response: ReachProbeResponse;
       try {
-        response = await fetch(url, {
-          method: 'HEAD',
-          headers: reachHeaders,
-          signal: controller.signal,
-        });
+        response = await reachProbeRequest(url, 'HEAD', reachHeaders, controller.signal);
       } catch {
         // Some servers reject HEAD — fall back to GET
         if (controller.signal.aborted) throw new Error('Timed out after 15s');
-        response = await fetch(url, {
-          method: 'GET',
-          headers: reachHeaders,
-          signal: controller.signal,
-        });
+        response = await reachProbeRequest(url, 'GET', reachHeaders, controller.signal);
       }
       const latency = Date.now() - start;
 
@@ -367,8 +457,19 @@ export function SuperDebugPanel({
       const msg = getErrorMessage(err) || 'Unknown error';
       addEntry('REACH', `Host unreachable after ${latency}ms`, 'error');
 
-      // Provide specific guidance based on error type
-      if (msg.includes('Network request failed') || msg.includes('Failed to connect')) {
+      // Provide specific guidance based on error type. The TLS check runs
+      // first: a rejected certificate reaches here as the same generic
+      // "Network request failed" text a genuinely unreachable host produces
+      // (see reachProbeRequest's onerror above), so isTlsRejection — which
+      // inspects the XHR's response body for the native error description
+      // rather than the generic message — is the only way to tell them apart.
+      if (isTlsRejection(err)) {
+        addEntry(
+          'WARN',
+          'The server was reached, but iOS rejected its TLS certificate. If you do not have HTTPS set up, turn off the "Use HTTPS" toggle. If you are intentionally using a self-signed certificate, enable "Allow Self-Signed Certificate" in the Security section above — trusting the certificate on this device alone is not enough for a third-party app to accept it.',
+          'warning',
+        );
+      } else if (msg.includes('Network request failed') || msg.includes('Failed to connect')) {
         addEntry(
           'WARN',
           'The device cannot reach the server at all. Possible causes:\n  1. IP address or domain is wrong\n  2. Server is off or qBittorrent is not running\n  3. Port is incorrect (qBittorrent default: 8080)\n  4. Firewall is blocking the connection\n  5. If remote: VPN/port forwarding not configured',
@@ -378,12 +479,6 @@ export function SuperDebugPanel({
         addEntry(
           'WARN',
           'Connection timed out. The server did not respond within 15 seconds. Possible causes:\n  1. Server is behind a firewall that silently drops packets\n  2. Wrong port (packets go nowhere)\n  3. Network latency too high (weak connection)',
-          'warning',
-        );
-      } else if (msg.includes('SSL') || msg.includes('certificate') || msg.includes('TLS')) {
-        addEntry(
-          'WARN',
-          'The server was reached, but iOS rejected its TLS certificate. If you do not have HTTPS set up, turn off the "Use HTTPS" toggle. If you are intentionally using a self-signed certificate, enable "Allow Self-Signed Certificate" in the Security section above — trusting the certificate on this device alone is not enough for a third-party app to accept it.',
           'warning',
         );
       } else {
@@ -490,7 +585,6 @@ export function SuperDebugPanel({
     addEntry('INFO', `Target: ${baseUrl}`, 'info');
     addEntry('INFO', `Platform: ${Platform.OS} ${Platform.Version}`, 'info');
     addEntry('INFO', `App: ${APP_VERSION}`, 'info');
-    const authModeLabel = useApiKey ? 'apiKey' : bypassAuth ? 'none' : 'password';
     addEntry(
       'INFO',
       `HTTPS: ${useHttps ? 'Yes' : 'No'} | Auth Method: ${authModeLabel} | Basic Auth: ${useBasicAuth ? 'Yes' : 'No'}`,
@@ -498,7 +592,7 @@ export function SuperDebugPanel({
     );
 
     let passed = 0;
-    const skipLogin = bypassAuth || useApiKey;
+    const skipLogin = bypassAuth || useApiKey || useQuiProxy;
     const totalSteps = skipLogin ? 2 : 4;
     let sessionCookie = '';
 
@@ -521,20 +615,12 @@ export function SuperDebugPanel({
       }
 
       try {
-        let reachResp: Response;
+        let reachResp: ReachProbeResponse;
         try {
-          reachResp = await fetch(baseUrl, {
-            method: 'HEAD',
-            headers: diagHeaders,
-            signal: controller.signal,
-          });
+          reachResp = await reachProbeRequest(baseUrl, 'HEAD', diagHeaders, controller.signal);
         } catch {
           if (controller.signal.aborted) throw new Error('Timed out after 15s');
-          reachResp = await fetch(baseUrl, {
-            method: 'GET',
-            headers: diagHeaders,
-            signal: controller.signal,
-          });
+          reachResp = await reachProbeRequest(baseUrl, 'GET', diagHeaders, controller.signal);
         }
         clearTimeout(reachTimeout);
         const reachLatency = Date.now() - reachStart;
@@ -560,7 +646,16 @@ export function SuperDebugPanel({
         const msg = getErrorMessage(err) || 'Unknown error';
         addEntry('REACH', `FAILED — Server unreachable after ${reachLatency}ms`, 'error');
 
-        if (msg.includes('Network request failed') || msg.includes('Failed to connect')) {
+        // TLS check first — see the matching comment on the Feature 1 probe
+        // above; the same generic "Network request failed" text covers both
+        // a rejected certificate and a genuinely unreachable host here.
+        if (isTlsRejection(err)) {
+          addEntry(
+            'WARN',
+            'The server was reached, but iOS rejected its TLS certificate. If you do not have HTTPS configured, turn off the "Use HTTPS" toggle. If you are intentionally using a self-signed certificate, enable "Allow Self-Signed Certificate" in the Security section above — trusting the certificate on this device alone is not enough for a third-party app to accept it.',
+            'warning',
+          );
+        } else if (msg.includes('Network request failed') || msg.includes('Failed to connect')) {
           addEntry(
             'WARN',
             'Your device cannot establish a connection to this address.\n\nChecklist:\n  1. Is the IP/domain correct?\n  2. Is qBittorrent running with WebUI enabled?\n  3. Is the port correct? (default: 8080)\n  4. Is a firewall blocking the connection?\n  5. If accessing remotely: is port forwarding or VPN set up?\n  6. Try "Open WebUI" above to test in a browser.',
@@ -574,12 +669,6 @@ export function SuperDebugPanel({
           addEntry(
             'WARN',
             'The server did not respond within 15 seconds.\n\nThis usually means:\n  1. A firewall is silently dropping packets\n  2. The port is wrong (nothing is listening)\n  3. The server is too slow or overloaded\n\nTry "Open WebUI" above to verify in a browser.',
-            'warning',
-          );
-        } else if (msg.includes('SSL') || msg.includes('certificate') || msg.includes('TLS')) {
-          addEntry(
-            'WARN',
-            'The server was reached, but iOS rejected its TLS certificate. If you do not have HTTPS configured, turn off the "Use HTTPS" toggle. If you are intentionally using a self-signed certificate, enable "Allow Self-Signed Certificate" in the Security section above — trusting the certificate on this device alone is not enough for a third-party app to accept it.',
             'warning',
           );
         } else {
@@ -596,9 +685,11 @@ export function SuperDebugPanel({
       if (skipLogin) {
         addEntry(
           'INFO',
-          useApiKey
-            ? 'Steps 2-3 skipped (API key auth is stateless — no login or session cookie).'
-            : 'Steps 2-3 skipped (auth bypass enabled).',
+          useQuiProxy
+            ? 'Steps 2-3 skipped (qui proxy auth is the key in the URL — qui answers login with a no-op, so there is no real login or session cookie).'
+            : useApiKey
+              ? 'Steps 2-3 skipped (API key auth is stateless — no login or session cookie).'
+              : 'Steps 2-3 skipped (auth bypass enabled).',
           'info',
         );
       } else {
@@ -765,6 +856,13 @@ export function SuperDebugPanel({
             sessionCookie,
             authHeader,
           };
+        } else if (useQuiProxy && apiResp.status === 401) {
+          addEntry('API', `HTTP 401 — qui rejected the proxy key (${apiLatency}ms)`, 'error');
+          addEntry(
+            'WARN',
+            'qui answers 401 when the key in the proxy URL is wrong or was revoked. Create a new Client API key in qui → Settings → Client Proxy and paste the new proxy URL.',
+            'warning',
+          );
         } else if (apiResp.status === 403) {
           addEntry('API', `HTTP 403 Forbidden — Not authenticated (${apiLatency}ms)`, 'error');
           if (useApiKey) {
@@ -867,7 +965,7 @@ export function SuperDebugPanel({
       `Host: ${clean || '(empty)'}`,
       `Port: ${portNum || 'default (80/443)'}`,
       `HTTPS: ${useHttps ? 'Yes' : 'No'}`,
-      `Auth Method: ${useApiKey ? 'apiKey' : bypassAuth ? 'none' : 'password'}`,
+      `Auth Method: ${authModeLabel}`,
       `Basic Auth: ${useBasicAuth ? 'Yes' : 'No'}`,
       '',
       '--- Diagnostic Log ---',
@@ -879,7 +977,7 @@ export function SuperDebugPanel({
     }
 
     try {
-      await Clipboard.setStringAsync(lines.join('\n'));
+      await Clipboard.setStringAsync(redactOutput(lines.join('\n')));
       addEntry('INFO', 'Full report copied to clipboard.', 'success');
     } catch (err: unknown) {
       addEntry('ERROR', `Failed to copy: ${getErrorMessage(err)}`, 'error');
@@ -932,7 +1030,7 @@ export function SuperDebugPanel({
         `Host: ${clean || '(empty)'}`,
         `Port: ${portNum || 'default (80/443)'}`,
         `HTTPS: ${useHttps ? 'Yes' : 'No'}`,
-        `Auth Method: ${useApiKey ? 'apiKey' : bypassAuth ? 'none' : 'password'}`,
+        `Auth Method: ${authModeLabel}`,
         `Basic Auth: ${useBasicAuth ? 'Yes' : 'No'}`,
         `Username: ${username ? '(set)' : '(empty)'}`,
         '',
@@ -1139,15 +1237,17 @@ export function SuperDebugPanel({
       rawSection.push('');
 
       // --- Assemble ---
-      const fullReport = [
-        ...header,
-        ...configSection,
-        ...diagSection,
-        ...connectivitySection,
-        ...serverLogSection,
-        ...rawSection,
-        '═══ End of Report ═══',
-      ].join('\n');
+      const fullReport = redactOutput(
+        [
+          ...header,
+          ...configSection,
+          ...diagSection,
+          ...connectivitySection,
+          ...serverLogSection,
+          ...rawSection,
+          '═══ End of Report ═══',
+        ].join('\n'),
+      );
 
       // Write to file
       const docDir = FileSystem.documentDirectory;

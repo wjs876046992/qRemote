@@ -134,11 +134,35 @@ export function isTorrentCompleted(state: string, progress: number): boolean {
 }
 
 /**
- * ETA is only meaningful while a torrent is still downloading.
+ * States where qBittorrent is actively working on the torrent: downloading,
+ * seeding, or checking. Stalled counts as active (it is running, just without
+ * peers); queued, stopped/paused, moving, and error states do not.
+ */
+export function isActiveState(state: string): boolean {
+  switch (state) {
+    case 'downloading':
+    case 'forcedDL':
+    case 'metaDL':
+    case 'forcedMetaDL':
+    case 'stalledDL':
+    case 'uploading':
+    case 'forcedUP':
+    case 'stalledUP':
+    case 'checkingDL':
+    case 'checkingUP':
+    case 'checkingResumeData':
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * While seeding, qBittorrent's ETA counts down to the share limit.
  * `8640000` is qBittorrent's sentinel for an infinite/unknown ETA.
  */
-export function hasEta(eta: number, progress: number): boolean {
-  return eta > 0 && eta < 8640000 && !isTorrentComplete(progress);
+export function hasEta(eta: number, state: string): boolean {
+  return eta > 0 && eta < 8640000 && isActiveState(state);
 }
 
 type TranslateFn = (key: string) => string;

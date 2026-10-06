@@ -35,3 +35,22 @@ try {
 export function setInsecureCertAllowedHosts(hosts: string[]): void {
   nativeModule?.setAllowedHosts(hosts);
 }
+
+/**
+ * True only when the native module is actually linked into this running
+ * binary — not just when the JS wrapper above loaded without throwing.
+ *
+ * OTA (over-the-air) JS updates ship independently of the native binary
+ * (`app.config.js`'s `runtimeVersion.policy: 'appVersion'` ties an OTA
+ * update to *any* binary on the same app version, native code included or
+ * not). So a device that installed this feature's JS via an OTA update, but
+ * whose binary predates the native module being added, gets a
+ * `nativeModule` of `null` here forever — `setInsecureCertAllowedHosts`
+ * above silently no-ops, and the "Allow Untrusted, Self-Signed Certificate"
+ * toggle looks like it does nothing. Callers use this flag to warn (see
+ * `services/server-manager.ts`'s `syncInsecureCertAllowlist`) or hint in the
+ * UI instead of failing silently (#256).
+ */
+export function isInsecureCertAllowlistAvailable(): boolean {
+  return nativeModule !== null;
+}

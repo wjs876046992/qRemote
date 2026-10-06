@@ -2,6 +2,7 @@ import {
   getStateColor,
   getStateLabel,
   hasEta,
+  isActiveState,
   isCompletedState,
   isTorrentCompleted,
 } from '@/utils/torrent-state';
@@ -258,19 +259,69 @@ describe('getStateLabel', () => {
 
 describe('hasEta', () => {
   it('returns true while downloading with a finite eta', () => {
-    expect(hasEta(3600, 0.5)).toBe(true);
+    expect(hasEta(3600, 'downloading')).toBe(true);
   });
 
-  it('returns false when complete (progress === 1)', () => {
-    expect(hasEta(3600, 1)).toBe(false);
+  it('returns false when complete', () => {
+    expect(hasEta(3600, 'stoppedDL')).toBe(false);
   });
 
   it('returns false for the infinite-eta sentinel (8640000)', () => {
-    expect(hasEta(8640000, 0.5)).toBe(false);
+    expect(hasEta(8640000, 'downloading')).toBe(false);
   });
 
   it('returns false when eta is 0', () => {
-    expect(hasEta(0, 0.5)).toBe(false);
+    expect(hasEta(0, 'downloading')).toBe(false);
+  });
+
+  it('returns true for seeding state', () => {
+    expect(hasEta(3600, 'uploading')).toBe(true);
+  });
+
+  it('returns true for stalledUP (seeding-time limit still counts down)', () => {
+    expect(hasEta(3600, 'stalledUP')).toBe(true);
+  });
+
+  it('returns false when queued', () => {
+    expect(hasEta(3600, 'queuedUP')).toBe(false);
+  });
+
+  it('returns true while checking a completed torrent', () => {
+    expect(hasEta(3600, 'checkingUP')).toBe(true);
+  });
+});
+
+describe('isActiveState', () => {
+  it.each([
+    'downloading',
+    'forcedDL',
+    'metaDL',
+    'forcedMetaDL',
+    'stalledDL',
+    'uploading',
+    'forcedUP',
+    'stalledUP',
+    'checkingUP',
+    'checkingDL',
+    'checkingResumeData',
+  ])('%s is active', (state) => {
+    expect(isActiveState(state)).toBe(true);
+  });
+
+  it.each([
+    'stoppedDL',
+    'stoppedUP',
+    'pausedDL',
+    'pausedUP',
+    'queuedDL',
+    'queuedUP',
+    'moving',
+    'allocating',
+    'error',
+    'missingFiles',
+    'unknown',
+  ])('%s is not active', (state) => {
+    expect(isActiveState(state)).toBe(false);
   });
 });
 

@@ -17,6 +17,7 @@ jest.mock('@/services/api/client', () => ({
     getServer: jest.fn(),
     setServer: jest.fn(),
     setApiVersion: jest.fn(),
+    abortInFlight: jest.fn(),
   },
 }));
 
@@ -46,6 +47,7 @@ import { apiClient } from '@/services/api/client';
 import { authApi } from '@/services/api/auth';
 import { applicationApi } from '@/services/api/application';
 import type { ServerConfig } from '@/types/api';
+import { QUI_KEY_MISSING_MESSAGE, QUI_KEY_REJECTED_MESSAGE } from '@/utils/quiProxy';
 
 const mockStorage = storageService as jest.Mocked<typeof storageService>;
 const mockApiClient = apiClient as jest.Mocked<typeof apiClient>;
@@ -143,13 +145,20 @@ describe('ServerManager', () => {
   describe('exportServers', () => {
     it('strips secrets from every exported server', async () => {
       mockStorage.getServers.mockResolvedValueOnce([
-        makeServer({ basicAuthPassword: 'proxy-secret', apiKey: 'key-secret' }),
+        makeServer({
+          basicAuthPassword: 'proxy-secret',
+          apiKey: 'key-secret',
+          useQuiProxy: true,
+          quiProxyKey: 'qui-key-secret',
+        }),
       ]);
       const exported = await ServerManager.exportServers();
       expect(exported.servers).toHaveLength(1);
       expect(exported.servers[0].password).toBe('');
       expect(exported.servers[0].basicAuthPassword).toBe('');
       expect(exported.servers[0].apiKey).toBe('');
+      expect(exported.servers[0].quiProxyKey).toBe('');
+      expect(JSON.stringify(exported)).not.toContain('qui-key-secret');
       expect(exported.servers[0]).toMatchObject({ id: 's1', host: 'example.com', port: 8080 });
     });
   });
@@ -170,6 +179,7 @@ describe('ServerManager', () => {
           password: 'kept-password',
           basicAuthPassword: 'kept-proxy',
           apiKey: 'kept-key',
+          quiProxyKey: 'kept-qui-key',
         }),
       ]);
       const imported = makeServer({
@@ -178,6 +188,7 @@ describe('ServerManager', () => {
         password: '',
         basicAuthPassword: '',
         apiKey: '',
+        quiProxyKey: '',
       });
       const result = await ServerManager.importServers([imported]);
       expect(result).toEqual({ added: 0, updated: 1 });
@@ -186,6 +197,7 @@ describe('ServerManager', () => {
         password: 'kept-password',
         basicAuthPassword: 'kept-proxy',
         apiKey: 'kept-key',
+        quiProxyKey: 'kept-qui-key',
       });
     });
 
@@ -297,6 +309,67 @@ describe('ServerManager', () => {
     });
   });
 
+  describe('connectToServer (qui proxy, #272)', () => {
+    const quiServer = makeServer({
+      useQuiProxy: true,
+      quiProxyKey: 'quikey123',
+      basePath: '/qui',
+      username: '',
+      password: '',
+    });
+
+    it('succeeds without calling login (qui login is a no-op; the key is the credential)', async () => {
+      mockApp.getVersion.mockResolvedValueOnce({ version: '5.0', apiVersion: '2.11' });
+      const result = await ServerManager.connectToServer(quiServer);
+      expect(result).toBe(true);
+      expect(mockAuth.login).not.toHaveBeenCalled();
+      expect(mockStorage.setCurrentServerId).toHaveBeenCalledWith('s1');
+      expect(mockApiClient.setApiVersion).toHaveBeenCalledWith('2.11');
+    });
+
+    it("surfaces qui's own key-rejection message instead of the generic credentials error", async () => {
+      const err = Object.assign(new Error(QUI_KEY_REJECTED_MESSAGE), { status: 401 });
+      mockApp.getVersion.mockRejectedValueOnce(err);
+      await expect(ServerManager.connectToServer(quiServer)).rejects.toThrow(
+        QUI_KEY_REJECTED_MESSAGE,
+      );
+    });
+
+    it('fails fast with a clear message when the server has no key (e.g. freshly imported)', async () => {
+      await expect(
+        ServerManager.connectToServer({ ...quiServer, quiProxyKey: '' }),
+      ).rejects.toThrow(QUI_KEY_MISSING_MESSAGE);
+      expect(mockApp.getVersion).not.toHaveBeenCalled();
+      expect(mockApiClient.setServer).toHaveBeenLastCalledWith(null);
+    });
+
+    it('does not fall back to a second endpoint when the key is rejected', async () => {
+      const err = Object.assign(new Error(QUI_KEY_REJECTED_MESSAGE), { status: 401 });
+      mockApp.getVersion.mockRejectedValueOnce(err);
+      await expect(
+        ServerManager.connectToServer({
+          ...quiServer,
+          useFallback: true,
+          fallbackHost: 'lan.example.com',
+        }),
+      ).rejects.toThrow(QUI_KEY_REJECTED_MESSAGE);
+      expect(mockApp.getVersion).toHaveBeenCalledTimes(1);
+    });
+
+    it('never puts the key in a connectivity log line', async () => {
+      const { clogInfo, clogWarn, clogError } = jest.requireMock('@/services/connectivity-log');
+      mockApp.getVersion.mockResolvedValueOnce({ version: '5.0', apiVersion: '2.11' });
+      await ServerManager.connectToServer(quiServer);
+      mockApp.getVersion.mockRejectedValueOnce(new Error(QUI_KEY_REJECTED_MESSAGE));
+      await ServerManager.connectToServer(quiServer).catch(() => undefined);
+      const logged = [clogInfo, clogWarn, clogError]
+        .flatMap((fn) => fn.mock.calls)
+        .map((call: unknown[]) => String(call[1]))
+        .join('\n');
+      expect(logged).not.toContain('quikey123');
+    });
+  });
+
   describe('connectToServer (with fallback)', () => {
     const serverWithFallback = makeServer({
       useFallback: true,
@@ -375,6 +448,24 @@ describe('ServerManager', () => {
       );
       await ServerManager.disconnect();
       expect(mockAuth.logout).not.toHaveBeenCalled();
+      expect(mockApiClient.setServer).toHaveBeenCalledWith(null);
+    });
+
+    it('disconnect skips logout for qui proxy servers (qui owns the real session)', async () => {
+      mockApiClient.getServer.mockReturnValue(makeServer({ useQuiProxy: true, quiProxyKey: 'k' }));
+      await ServerManager.disconnect();
+      expect(mockAuth.logout).not.toHaveBeenCalled();
+      expect(mockApiClient.setServer).toHaveBeenCalledWith(null);
+    });
+
+    it('disconnect cancels in-flight requests instead of waiting out a hung logout (#254)', async () => {
+      mockApiClient.getServer.mockReturnValue(makeServer());
+      // A logout that never resolves — simulates an unreachable server. If
+      // disconnect() awaited it directly (instead of firing it and calling
+      // abortInFlight()), this test would hang.
+      mockAuth.logout.mockReturnValueOnce(new Promise(() => {}));
+      await ServerManager.disconnect();
+      expect(mockApiClient.abortInFlight).toHaveBeenCalled();
       expect(mockApiClient.setServer).toHaveBeenCalledWith(null);
     });
 
@@ -463,6 +554,39 @@ describe('ServerManager', () => {
       );
       expect(result.success).toBe(true);
       expect(mockAuth.login).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('testConnection (qui proxy, #272)', () => {
+    const quiServer = makeServer({
+      useQuiProxy: true,
+      quiProxyKey: 'quikey123',
+      username: '',
+      password: '',
+    });
+
+    it('skips login and succeeds on a version response', async () => {
+      mockApiClient.getServer.mockReturnValue(null);
+      mockApp.getVersion.mockResolvedValueOnce({ version: '5.0', apiVersion: '2.11' });
+      const result = await ServerManager.testConnection(quiServer);
+      expect(result.success).toBe(true);
+      expect(mockAuth.login).not.toHaveBeenCalled();
+    });
+
+    it('reports qui\'s key rejection verbatim rather than "check your credentials"', async () => {
+      mockApiClient.getServer.mockReturnValue(null);
+      mockApp.getVersion.mockRejectedValueOnce(
+        Object.assign(new Error(QUI_KEY_REJECTED_MESSAGE), { status: 401 }),
+      );
+      const result = await ServerManager.testConnection(quiServer);
+      expect(result).toEqual({ success: false, error: QUI_KEY_REJECTED_MESSAGE });
+    });
+
+    it('reports a missing key without making a request', async () => {
+      mockApiClient.getServer.mockReturnValue(null);
+      const result = await ServerManager.testConnection({ ...quiServer, quiProxyKey: '' });
+      expect(result).toEqual({ success: false, error: QUI_KEY_MISSING_MESSAGE });
+      expect(mockApp.getVersion).not.toHaveBeenCalled();
     });
   });
 

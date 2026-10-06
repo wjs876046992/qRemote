@@ -52,6 +52,11 @@ export function resolveServerEndpoint(
   server: ServerConfig,
   endpoint: ServerEndpointKind,
 ): ServerConfig {
+  // qui Client Proxy (#272): the endpoint's `basePath` is the qui base path (the
+  // client appends `/proxy/<key>` itself), and the key is shared — the spread
+  // below carries `quiProxyKey` into the fallback endpoint unchanged. The qui
+  // forms always write an explicit `fallbackBasePath` ('/' when the fallback
+  // URL has no base) so a root-served fallback doesn't inherit the primary's.
   if (endpoint === 'fallback' && hasFallback(server)) {
     return {
       ...server,

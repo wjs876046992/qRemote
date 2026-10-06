@@ -43,6 +43,7 @@ import { shadows } from '@/constants/shadows';
 import { typography } from '@/constants/typography';
 import { getErrorMessage } from '@/utils/error';
 import { haptics } from '@/utils/haptics';
+import { getRssFeedDisplayName } from '@/utils/rss';
 
 const DEFAULT_RULE: RssRule = {
   enabled: true,
@@ -144,7 +145,7 @@ export default function RssRuleEditorScreen() {
   const [contentLayoutPickerVisible, setContentLayoutPickerVisible] = useState(false);
 
   const feedOptions: MultiSelectPickerItem[] = useMemo(
-    () => feeds.map((f) => ({ label: f.feed.title || f.feed.url, value: f.feed.url })),
+    () => feeds.map((f) => ({ label: getRssFeedDisplayName(f.path, f.feed), value: f.feed.url })),
     [feeds],
   );
 

@@ -65,6 +65,18 @@ export interface ApiFeatures {
   hasModernProxyFields: boolean;
   /** I2P settings (i2p_enabled etc.) exist in app/preferences (WebAPI ≥ 2.11.0 / qBit 5.0). */
   supportsI2p: boolean;
+  /**
+   * torrents/fetchMetadata endpoint exists (WebAPI ≥ 2.11.9, qBit 5.2+) — resolves a
+   * magnet/hash/.torrent URL to its info hash and tracker list without adding the
+   * torrent. Used by the Search tab to confirm suspected duplicate results (#267).
+   */
+  supportsFetchMetadata: boolean;
+  /**
+   * torrents/fetchMetadata (and torrents/add) accept a "downloader" search-plugin
+   * name, so a result URL is fetched through the plugin that produced it — the
+   * way search/downloadTorrent does (WebAPI ≥ 2.13.1).
+   */
+  supportsFetchMetadataDownloader: boolean;
 }
 
 export function parseApiVersion(raw: string): ParsedVersion | null {
@@ -101,6 +113,8 @@ const V5_FEATURES: ApiFeatures = {
   hasIsPrivate: true,
   hasModernProxyFields: true,
   supportsI2p: true,
+  supportsFetchMetadata: true,
+  supportsFetchMetadataDownloader: true,
 };
 
 export function getApiFeatures(apiVersion: string | null): ApiFeatures {
@@ -124,6 +138,8 @@ export function getApiFeatures(apiVersion: string | null): ApiFeatures {
     hasIsPrivate: gte(v, 2, 9),
     hasModernProxyFields: gte(v, 2, 9),
     supportsI2p: isV5,
+    supportsFetchMetadata: gte(v, 2, 11, 9),
+    supportsFetchMetadataDownloader: gte(v, 2, 13, 1),
   };
 }
 

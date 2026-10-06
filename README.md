@@ -80,7 +80,7 @@ Make qBittorrent behave *your* way, and manage every server you run:
 
 - Real-time incremental sync — updates every 2–3 seconds without hammering your server
 - Fully customizable theme — override any color, with dark and light modes
-- 6 languages: English, Spanish, Chinese, French, German, Russian
+- 7 languages: English, Spanish, Chinese, French, German, Russian, Polish
 - Registers as an "Open With" handler for `.torrent` files in the Files app
 - Connectivity logs for troubleshooting your connection
 
