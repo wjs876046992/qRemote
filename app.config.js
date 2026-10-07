@@ -22,64 +22,82 @@ module.exports = {
       backgroundColor: '#0A0A0A',
     },
     // NOTE: ios/ is generated, not committed (untracked since #154). `npm run
-    // xcode` prebuilds/pod installs it. `package.json` EAS tags govern builds.
-    ios: {
-      bundleIdentifier: isDevelopmentBuild
-        ? 'team.blechstephens.qremote.development'
-        : 'team.blechstephens.qremote',
-      supportsTablet: true,
-      usesAppleSignIn: false,
-      infoPlist: {
-        UIBackgroundModes: ['fetch'],
-        LSApplicationQueriesSchemes: ['qremote'],
-        NSPhotoLibraryUsageDescription:
-          'Allow qRemote to access your photos so you can select a downloaded torrent to upload and share.',
-        ITSAppUsesNonExemptEncryption: false,
-      },
-    },
+    // xcode` runs `expo prebuild -p ios`, which APPLIES the `ios.infoPlist`
+    // block below to the generated project — this is the authoritative place
+    // for native Info.plist configuration (see AGENTS.md "iOS Native
+    // Workflow"). Hand-edits made directly under ios/ are machine-local and
+    // can be rewritten by the next prebuild.
     android: {
-      package: isDevelopmentBuild
-        ? 'team.blechstephens.qremote.development'
-        : 'team.blechstephens.qremote',
-      adaptiveIcon: {
-        foregroundImage: './assets/adaptive-icon.png',
-        backgroundColor: '#0A0A0A',
+      package: 'com.qRemote.app',
+      // Allow HTTP (cleartext) connections — Android 9+ blocks them by default.
+      // Required for local LAN qBittorrent servers using http://192.168.x.x
+      usesCleartextTraffic: true,
+    },
+    ios: {
+      supportsTablet: true,
+      bundleIdentifier: isDevelopmentBuild ? 'com.taylorcox75.expogo' : 'com.qRemote.app',
+      appStoreUrl: 'https://apps.apple.com/us/app/qremote-for-qbittorrent/id6756276747',
+      infoPlist: {
+        // Must be false: RN's StatusBar API (expo-status-bar / FocusAwareStatusBar)
+        // is a no-op when iOS uses view-controller-based status bar appearance,
+        // leaving the bar stuck on the system appearance (white icons in light mode).
+        UIViewControllerBasedStatusBarAppearance: false,
+        ITSAppUsesNonExemptEncryption: false,
+        NSAppTransportSecurity: {
+          NSAllowsArbitraryLoads: true,
+        },
+        CFBundleURLTypes: [
+          {
+            CFBundleURLName: 'com.qRemote.app.magnet',
+            CFBundleURLSchemes: ['magnet'],
+          },
+        ],
+        // Required (true, not just present — ITMS-90737 only requires the key
+        // exist, but `false` demotes the app to a Share-Sheet-only receiver,
+        // dropping it from Files' direct "Open In" / tap-to-open listing).
+        // `true` means iOS hands the app a security-scoped reference to the
+        // file at its original location instead of a sandboxed copy; reading
+        // that from JS is a race the async Linking bridge usually loses (the
+        // scope can lapse before app/_layout.tsx's handler runs) — see the
+        // withNativeTorrentFileCopy plugin below, which copies the file
+        // natively inside the native open-URL callback (while the scope is
+        // still guaranteed valid) so JS only ever sees a plain, already-owned
+        // copy.
+        LSSupportsOpeningDocumentsInPlace: true,
+        // Register as an "Open In" handler for .torrent files (issues #88, #125).
+        // LSHandlerRank must be Owner (paired with the EXPORTED declaration
+        // below) for Files' tap-to-open and "Always Open With" to list the
+        // app — as a mere Alternate viewer of an unowned type, iOS fell back
+        // to QuickLook Preview and showed "No Apps Available" (#125).
+        CFBundleDocumentTypes: [
+          {
+            CFBundleTypeName: 'BitTorrent Document',
+            CFBundleTypeRole: 'Viewer',
+            LSHandlerRank: 'Owner',
+            LSItemContentTypes: ['org.bittorrent.torrent', 'com.bittorrent.torrent'],
+          },
+        ],
+        // EXPORTED, not imported (#125): "imported" tells iOS another app
+        // owns this type definition — but no installed app exports a torrent
+        // UTI, so the type was effectively unowned and Files offered no
+        // open-with handlers. Exporting makes qRemote the canonical definer.
+        // Conformance to public.content (alongside public.data) is also
+        // required for Files' open-with eligibility — public.data alone only
+        // gets the type into the share sheet.
+        UTExportedTypeDeclarations: [
+          {
+            UTTypeIdentifier: 'org.bittorrent.torrent',
+            UTTypeConformsTo: ['public.data', 'public.content'],
+            UTTypeDescription: 'BitTorrent Document',
+            UTTypeTagSpecification: {
+              'public.filename-extension': ['torrent'],
+              'public.mime-type': ['application/x-bittorrent'],
+            },
+          },
+        ],
       },
-      intentFilters: [
-        {
-          action: 'VIEW',
-          autoVerify: true,
-          data: [
-            {
-              scheme: 'qremote',
-            },
-            {
-              scheme: 'magnet',
-            },
-            {
-              mimeType: 'application/x-bittorrent',
-            },
-          ],
-          category: ['BROWSABLE', 'DEFAULT'],
-        },
-        {
-          action: 'SEND',
-          data: [
-            {
-              mimeType: 'application/x-bittorrent',
-            },
-            {
-              mimeType: 'text/plain',
-            },
-          ],
-          category: ['DEFAULT'],
-        },
-      ],
-      userInterfaceStyle: 'automatic',
     },
     web: {
-      bundler: 'metro',
-      output: 'static',
       favicon: './assets/favicon.png',
     },
     plugins: [
