@@ -46,10 +46,9 @@ import { useSearchJob } from '@/hooks/useSearchJob';
 import { useSearchHashResolver } from '@/hooks/useSearchHashResolver';
 import { searchApi } from '@/services/api/search';
 import { torrentsApi } from '@/services/api/torrents';
-import { tagsApi } from '@/services/api/tags';
 import { storageService } from '@/services/storage';
-import { abortableDelay, prepareTrackerTopUp } from '@/services/search-tracker-topup';
-import { clogDebug, clogWarn } from '@/services/connectivity-log';
+import { prepareTrackerTopUp, tagNewlyDownloadedTorrent } from '@/services/search-tracker-topup';
+import { clogWarn } from '@/services/connectivity-log';
 import { SearchPlugin, SearchResult } from '@/types/api';
 import { SearchInMode } from '@/types/preferences';
 import { siteHost, resultTrackerLabel } from '@/utils/searchResult';
@@ -72,6 +71,12 @@ import { buttonStyles, buttonText } from '@/constants/buttons';
 import { getErrorMessage } from '@/utils/error';
 import { haptics } from '@/utils/haptics';
 import { compareByQuality } from '@/utils/video-quality';
+import {
+  orderPluginsWithPins,
+  prunePinnedPlugins,
+  togglePinnedPlugin,
+} from '@/utils/search-plugins';
+import { getResultDownloader, planPluginUrlAdd } from '@/utils/search-download';
 import {
   GroupAddPlan,
   SearchResultGroup,
@@ -98,54 +103,6 @@ const SORT_OPTIONS: Array<{
   { key: 'quality', labelKey: 'screens.search.sortQuality', icon: 'film-outline' },
 ];
 
-const TAG_MATCH_ATTEMPTS = 8;
-const TAG_MATCH_DELAY_MS = 2000;
-
-/**
- * search/downloadTorrent (used for plugin-native downloads, see
- * handleAddResult) never reports which torrent it added — it's fire-and-forget
- * server-side. Best-effort: poll the torrent list for a name match and tag it
- * once it appears, silently (no toast) since this is a background nicety, not
- * a user-initiated action. Prefers the newest match by `added_on` when several
- * share the same name. Aborts cleanly when `signal` is aborted (e.g. unmount).
- */
-async function tagNewlyDownloadedTorrent(
-  fileName: string,
-  tag: string,
-  signal?: AbortSignal,
-): Promise<void> {
-  for (let attempt = 0; attempt < TAG_MATCH_ATTEMPTS; attempt++) {
-    if (signal?.aborted) return;
-    await abortableDelay(TAG_MATCH_DELAY_MS, signal);
-    if (signal?.aborted) return;
-    try {
-      const list = await torrentsApi.getTorrentList();
-      if (signal?.aborted) return;
-      const match = list
-        .filter(
-          (torrent) =>
-            torrent.name === fileName &&
-            !torrent.tags
-              .split(',')
-              .map((existing) => existing.trim())
-              .includes(tag),
-        )
-        .sort((a, b) => (b.added_on ?? 0) - (a.added_on ?? 0))[0];
-      if (match) {
-        await tagsApi.createTags([tag]);
-        if (signal?.aborted) return;
-        await torrentsApi.addTorrentTags([match.hash], [tag]);
-        clogDebug('SEARCH', `Auto-tagged "${fileName}" with tracker tag "${tag}"`);
-        return;
-      }
-    } catch {
-      // Keep retrying — best-effort only, no user-facing error.
-    }
-  }
-  if (signal?.aborted) return;
-  clogWarn('SEARCH', `Could not find newly added torrent "${fileName}" to auto-tag with "${tag}"`);
-}
-
 /** What a group add carries beyond the single result handed to the normal add path. */
 interface GroupAddExtras {
   /** The row to show the spinner on, when that differs from `result.fileUrl` (a merged magnet). */
@@ -161,6 +118,7 @@ export default function SearchScreen() {
   const incomingParams = useLocalSearchParams<{ q?: string; ts?: string }>();
   const { isConnected } = useServer();
   const { features } = useApiFeatures();
+  const { supportsFetchMetadataDownloader, supportsSearchDownloadTorrent } = features;
   const { isDark, colors } = useTheme();
   const { showToast } = useToast();
   const cart = useSearchCart();
@@ -285,6 +243,14 @@ export default function SearchScreen() {
   // lets "Add now" add the whole group rather than just the row's primary.
   const [actionGroup, setActionGroup] = useState<SearchResultGroup | null>(null);
 
+  // #283: persisted plugin `name` ids pinned to the front of the plugin chip
+  // row. Tapping a chip's icon toggles its pin (see handleTogglePin).
+  const [pinnedPlugins, setPinnedPlugins] = useState<string[]>([]);
+  // Mirrors pinnedPlugins so back-to-back taps toggle from the latest list, not
+  // from whatever the callback closed over before the re-render.
+  const pinnedPluginsRef = useRef<string[]>([]);
+  const pluginRowRef = useRef<ScrollView>(null);
+
   // pubDate is a qBit 5.0+ (WebAPI >= 2.11.0) field — hide the option on older
   // servers rather than offering a sort that silently does nothing.
   const visibleSortOptions = useMemo(
@@ -307,6 +273,10 @@ export default function SearchScreen() {
         // Absent means on (the default); only an explicit opt-out turns it off.
         if (prefs.searchGroupDuplicates === false) setGroupDuplicates(false);
         if (prefs.searchInMode === 'names') setSearchInMode('names');
+        if (Array.isArray(prefs.searchPinnedPlugins)) {
+          pinnedPluginsRef.current = prefs.searchPinnedPlugins;
+          setPinnedPlugins(prefs.searchPinnedPlugins);
+        }
       } catch {
         // ignore — defaults are fine
       }
@@ -352,6 +322,42 @@ export default function SearchScreen() {
       return a.fullName.localeCompare(b.fullName);
     });
   }, [plugins]);
+
+  // #283 plugin pinning (`pinnedPlugins` state is declared with the other
+  // state above). Only pins that are still installed count, so an uninstalled
+  // plugin never shows a star or reorders the chips.
+  const activePinnedPlugins = useMemo(
+    () => prunePinnedPlugins(pinnedPlugins, plugins),
+    [pinnedPlugins, plugins],
+  );
+  // Chip-row order: pinned plugins first, then the rest, each keeping the
+  // enabled-then-name order. `sortedPlugins` itself stays unpinned for the
+  // other consumers.
+  const pinOrderedPlugins = useMemo(
+    () => orderPluginsWithPins(sortedPlugins, activePinnedPlugins),
+    [sortedPlugins, activePinnedPlugins],
+  );
+
+  // Tapping a plugin chip's icon pins/unpins that plugin. A newly pinned chip
+  // jumps to the front of the row, so scroll back to the start to show where it
+  // went (the row may have been scrolled to wherever the chip was).
+  const handleTogglePin = useCallback(
+    async (name: string) => {
+      haptics.light();
+      // Toggling also prunes uninstalled names so they don't pile up in storage.
+      const next = togglePinnedPlugin(pinnedPluginsRef.current, name, plugins);
+      pinnedPluginsRef.current = next;
+      setPinnedPlugins(next);
+      if (next.includes(name)) pluginRowRef.current?.scrollTo({ x: 0, animated: true });
+      try {
+        await storageService.updatePreferences({ searchPinnedPlugins: next });
+      } catch (err: unknown) {
+        // The in-memory pins still work; only persistence across launches is lost.
+        clogWarn('SEARCH', `Failed to save pinned plugins preference: ${getErrorMessage(err)}`);
+      }
+    },
+    [plugins],
+  );
 
   // Categories supported by the currently selected plugin. When searching
   // across every plugin (ALL, or the legacy ENABLED value some users may
@@ -716,10 +722,10 @@ export default function SearchScreen() {
 
   // The escape hatch behind the new searchAddOpensDialogue pref (#217) and
   // the long-press action sheet's "Add now" item — unchanged from before the
-  // cart/dialogue feature. Also the only path that still routes eligible
-  // results through search/downloadTorrent (see the isMagnet branch below),
-  // which cart checkout (torrents/add only, see app/torrents/add.tsx)
-  // deliberately does not use.
+  // cart/dialogue feature. Plugin-resolved results (getResultDownloader) go
+  // through their plugin here, and the dialogue and cart checkout do the same
+  // (#284): the dialogue gets the plugin as the `sourcePlugin` route param, the
+  // cart item carries it as `downloader`.
   //
   // `extras` is only ever passed when adding a whole group (#267); for a single
   // result it is absent and nothing below changes.
@@ -740,21 +746,24 @@ export default function SearchScreen() {
 
         // Non-magnet result URLs from direct tracker plugins often need the
         // plugin's context to resolve (login cookies, magnet extraction from
-        // an HTML page, …) — delegate those to search/downloadTorrent
-        // (qBit 5.0+) so the owning plugin fetches server-side, the way
-        // qBittorrent's own WebUI adds results. Aggregator (Prowlarr/Jackett)
-        // URLs are the exception: they carry their own apikey, and their
-        // download links often answer with a redirect straight to a magnet
-        // URI — qBittorrent CORE follows that fine via torrents/add, while
-        // the Python search plugins choke on the non-HTTP redirect.
-        const isMagnet = result.fileUrl.trim().toLowerCase().startsWith('magnet:');
-        if (
-          !isMagnet &&
-          !isAggregatedSource &&
-          features.supportsSearchDownloadTorrent &&
-          result.engineName
-        ) {
-          await searchApi.downloadTorrent(result.fileUrl, result.engineName);
+        // an HTML page, …), so the owning plugin has to fetch them server-side,
+        // the way qBittorrent's own WebUI adds results (getResultDownloader
+        // says which plugin, and also why aggregator URLs are the exception).
+        // torrents/add can name the plugin itself on WebAPI ≥ 2.13.1;
+        // search/downloadTorrent does the same on 5.0–5.1.
+        const downloader = getResultDownloader(result);
+        const plan = planPluginUrlAdd(downloader, {
+          supportsFetchMetadataDownloader,
+          supportsSearchDownloadTorrent,
+        });
+        if (plan === 'addWithDownloader') {
+          // Tags are an add option here, so no background tagging is needed.
+          await torrentsApi.addTorrent(result.fileUrl, {
+            tags: trackerTag ? [trackerTag] : undefined,
+            downloader,
+          });
+        } else if (plan === 'searchDownloadTorrent' && downloader) {
+          await searchApi.downloadTorrent(result.fileUrl, downloader);
           // search/downloadTorrent never reports which torrent it added — tag
           // it in the background, best-effort, once it shows up by name.
           if (trackerTag) {
@@ -782,7 +791,13 @@ export default function SearchScreen() {
         setPendingAddUrl(null);
       }
     },
-    [features.supportsSearchDownloadTorrent, isAggregatedSource, showToast, t],
+    [
+      supportsFetchMetadataDownloader,
+      supportsSearchDownloadTorrent,
+      isAggregatedSource,
+      showToast,
+      t,
+    ],
   );
 
   // + button handler (#217). Gated by searchAddOpensDialogue (default true):
@@ -810,10 +825,17 @@ export default function SearchScreen() {
         const startTrackerTopUp = extras?.trackerFollowUp
           ? await prepareTrackerTopUp(extras.trackerFollowUp, activeTagPollsRef.current)
           : null;
+        // A plugin-resolved link (HTML page, cookie-gated download, …) must be
+        // fetched by its plugin or the add silently does nothing (#284). The dialog
+        // gets the plugin alongside the URL; a merged group magnet needs none.
+        const sourcePlugin = getResultDownloader(result);
+        const params = sourcePlugin
+          ? { sourceUrl: result.fileUrl, sourcePlugin }
+          : { sourceUrl: result.fileUrl };
         if (variant === 'full') {
-          router.push({ pathname: '/torrents/add', params: { sourceUrl: result.fileUrl } });
+          router.push({ pathname: '/torrents/add', params });
         } else {
-          router.push({ pathname: '/', params: { sourceUrl: result.fileUrl } });
+          router.push({ pathname: '/', params });
         }
         startTrackerTopUp?.();
       } catch {
@@ -857,6 +879,7 @@ export default function SearchScreen() {
         fileSize: result.fileSize,
         nbSeeders: result.nbSeeders ?? 0,
         indexerLabel: resultTrackerLabel(result, isAggregatedSource),
+        downloader: getResultDownloader(result),
       });
     },
     [cart, isAggregatedSource],
@@ -979,19 +1002,25 @@ export default function SearchScreen() {
     key: string;
     label: string;
     icon: React.ComponentProps<typeof Ionicons>['name'];
+    /** Plugin chips show a filled star when pinned, an outline star when not; "All plugins" is never pinnable. */
+    pinned?: boolean;
   };
 
   const pluginChips: PluginChip[] = useMemo(() => {
     const chips: PluginChip[] = [{ key: ALL, label: t('screens.search.allPlugins'), icon: 'apps' }];
-    for (const p of sortedPlugins) {
+    const pinnedSet = new Set(activePinnedPlugins);
+    // `pinOrderedPlugins` already puts pinned plugins first, right after "All plugins".
+    for (const p of pinOrderedPlugins) {
       chips.push({
         key: p.name,
         label: p.enabled ? p.fullName : `${p.fullName} (${t('common.disabled')})`,
-        icon: 'extension-puzzle',
+        // Outline = tap to pin, filled = pinned (tap to unpin).
+        icon: pinnedSet.has(p.name) ? 'star' : 'star-outline',
+        pinned: pinnedSet.has(p.name),
       });
     }
     return chips;
-  }, [sortedPlugins, t]);
+  }, [pinOrderedPlugins, activePinnedPlugins, t]);
 
   // ────────────────────────────────────────────────── empty states ────────
 
@@ -1266,6 +1295,7 @@ export default function SearchScreen() {
               {/* Plugin chip row */}
               <View style={styles.filterRow}>
                 <ScrollView
+                  ref={pluginRowRef}
                   horizontal
                   showsHorizontalScrollIndicator={false}
                   contentContainerStyle={styles.filterRowContainer}
@@ -1290,6 +1320,13 @@ export default function SearchScreen() {
                         key={chip.key}
                         label={chip.label}
                         icon={chip.icon}
+                        // #283: tapping the icon pins/unpins a plugin; the rest of
+                        // the chip still selects it.
+                        onIconPress={chip.key === ALL ? undefined : () => handleTogglePin(chip.key)}
+                        iconAccessibilityLabel={t(
+                          chip.pinned ? 'screens.search.unpinPlugin' : 'screens.search.pinPlugin',
+                          { name: chip.label },
+                        )}
                         active={isActive}
                         numberOfLines={1}
                         style={styles.filterChip}

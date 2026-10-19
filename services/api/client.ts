@@ -102,9 +102,15 @@ class ApiClient {
 
         const protocol = this.currentServer.useHttps ? 'https' : 'http';
         // Defense-in-depth: strip protocol and trailing colons/slashes from host even if already sanitized
-        const host = (this.currentServer.host || '')
+        const rawHost = (this.currentServer.host || '')
           .replace(/^(https?:\/\/)/i, '')
           .replace(/[:/]+$/, '');
+        // The server forms have no base-path field, so a reverse-proxy path can
+        // arrive inside Host ("example.com/qbit"). Split it off so the port goes
+        // after the hostname, not after the path ("example.com/qbit:8443").
+        const hostSlash = rawHost.indexOf('/');
+        const host = hostSlash === -1 ? rawHost : rawHost.slice(0, hostSlash);
+        const hostPath = hostSlash === -1 ? '' : rawHost.slice(hostSlash).replace(/\/+$/, '');
         const port = this.currentServer.port;
         const portNum = port !== undefined && port !== null ? Number(port) : undefined;
         const portPart =
@@ -132,7 +138,7 @@ class ApiClient {
           basePath = basePath.slice(0, -1);
         }
 
-        config.baseURL = `${protocol}://${host}${portPart}${basePath}`;
+        config.baseURL = `${protocol}://${host}${portPart}${hostPath}${basePath}`;
 
         // Every URL that reaches the log is redacted — in qui mode the baseURL
         // contains the secret key.
@@ -160,11 +166,15 @@ class ApiClient {
           config.headers.Cookie = this.cookies;
         }
 
-        // Add Referer header for qBittorrent 5.x compatibility
-        config.headers.Referer = config.baseURL + '/';
-
-        // Add Origin header for CORS/authentication
-        config.headers.Origin = `${protocol}://${host}${portPart}`;
+        // Referer/Origin for qBittorrent 5.x compatibility — but never through
+        // qui (#278). qui forwards them untouched while rewriting Host to the
+        // qBittorrent instance (e.g. `qbittorrent:8081`), so qBit's CSRF check
+        // sees a qui-host Origin vs a qBit-host Host and answers 401
+        // "Unauthorized". qui's other clients (Sonarr, Radarr…) send neither.
+        if (!isQuiProxy) {
+          config.headers.Referer = config.baseURL + '/';
+          config.headers.Origin = `${protocol}://${host}${portPart}`;
+        }
 
         // Custom headers (#228) — for tunnels/proxies with their own
         // header-based auth (e.g. Pangolin), independent of qBittorrent's

@@ -41,13 +41,16 @@ import { ConfirmModal } from '@/components/ConfirmModal';
 import { FocusAwareStatusBar } from '@/components/FocusAwareStatusBar';
 import { EmptyState } from '@/components/EmptyState';
 import { FilterChip } from '@/components/FilterChip';
+import { SearchHistoryDropdown } from '@/components/SearchHistoryDropdown';
 import { torrentsApi } from '@/services/api/torrents';
+import { searchApi } from '@/services/api/search';
 import { applicationApi } from '@/services/api/application';
 import { apiClient } from '@/services/api/client';
 import { storageService } from '@/services/storage';
 import { ExpandedCardField, DEFAULT_PREFERENCES } from '@/types/preferences';
 import { ServerManager } from '@/services/server-manager';
 import { getPauseOnAddPreferenceKey } from '@/utils/apiVersion';
+import { getPrefilledDownloader, planPluginUrlAdd, PrefilledPlugin } from '@/utils/search-download';
 import { formatSpeed, kbToBytes } from '@/utils/format';
 import { haptics } from '@/utils/haptics';
 import { shadows } from '@/constants/shadows';
@@ -66,6 +69,15 @@ import { isTorrentCompleted } from '@/utils/torrent-state';
 import { OptionPicker, OptionPickerItem } from '@/components/OptionPicker';
 import { MultiSelectPicker, MultiSelectPickerItem } from '@/components/MultiSelectPicker';
 import { torrentHasAnyTag, UNTAGGED_FILTER } from '@/utils/tags';
+import {
+  MAX_PINNED_SEARCHES,
+  SearchHistoryState,
+  clearUnpinned,
+  getHistoryEntries,
+  recordQuery,
+  removeQuery,
+  togglePin,
+} from '@/utils/search-history';
 
 export default function TorrentsScreen() {
   const { t } = useTranslation();
@@ -96,6 +108,7 @@ export default function TorrentsScreen() {
     torrentFileUri?: string | string[];
     torrentFileName?: string | string[];
     sourceUrl?: string | string[];
+    sourcePlugin?: string | string[];
   }>();
 
   // State
@@ -103,6 +116,9 @@ export default function TorrentsScreen() {
   const [filter, setFilter] = useState<string>('all');
   const [showAddModal, setShowAddModal] = useState(false);
   const [torrentUrl, setTorrentUrl] = useState('');
+  // The search plugin that must fetch `torrentUrl` when it was pre-filled from a
+  // Search result whose link only that plugin can resolve (#284).
+  const [sourcePlugin, setSourcePlugin] = useState<PrefilledPlugin | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<
     { uri: string; name: string; mimeType?: string }[]
   >([]);
@@ -126,6 +142,25 @@ export default function TorrentsScreen() {
   >('added_on');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [showSortMenu, setShowSortMenu] = useState(false);
+  // Drives only the pull-to-refresh spinner. `isLoading` also flips on every
+  // background poll/foreground re-sync, and wiring it to RefreshControl would
+  // pop the iOS spinner on top of the search box on every load (#275).
+  const [isPullRefreshing, setIsPullRefreshing] = useState(false);
+  // Recent/pinned searches for the search box (#282). The ref mirrors the
+  // state so blur/submit handlers always record against the latest lists.
+  const [searchHistory, setSearchHistory] = useState<SearchHistoryState>({
+    history: [],
+    pinned: [],
+  });
+  const searchHistoryRef = useRef(searchHistory);
+  const [searchHistoryLimit, setSearchHistoryLimit] = useState(
+    DEFAULT_PREFERENCES.torrentSearchHistoryLimit,
+  );
+  const [showSearchHistory, setShowSearchHistory] = useState(false);
+  // Measured so the dropdown can sit right under the search field, whatever
+  // the header above it (server switcher row) happens to add.
+  const [searchRowLayout, setSearchRowLayout] = useState({ x: spacing.md, y: 50, height: 0 });
+  const [searchInputX, setSearchInputX] = useState(0);
   const [cardViewMode, setCardViewMode] = useState<'compact' | 'expanded'>('compact');
   const [expandedCardFields, setExpandedCardFields] = useState<Record<ExpandedCardField, boolean>>(
     DEFAULT_PREFERENCES.expandedCardFields,
@@ -210,6 +245,120 @@ export default function TorrentsScreen() {
     }, [setToastTopOffset, headerHeight]),
   );
 
+  const handlePullRefresh = useCallback(async () => {
+    setIsPullRefreshing(true);
+    try {
+      await refresh();
+    } finally {
+      setIsPullRefreshing(false);
+    }
+  }, [refresh]);
+
+  // --- Recent searches (#282) -------------------------------------------
+  const persistSearchHistory = useCallback(async (next: SearchHistoryState) => {
+    try {
+      await storageService.updatePreferences({
+        torrentSearchHistory: next.history,
+        torrentSearchPinned: next.pinned,
+      });
+    } catch {
+      // best-effort
+    }
+  }, []);
+
+  const applySearchHistory = useCallback(
+    (next: SearchHistoryState) => {
+      searchHistoryRef.current = next;
+      setSearchHistory(next);
+      void persistSearchHistory(next);
+    },
+    [persistSearchHistory],
+  );
+
+  // Records `query` (ignored when too short or history is off) and skips the
+  // write when nothing would change. Only submit and picking an entry record:
+  // the filter is live, so recording on blur saved half-typed fragments.
+  const recordSearch = useCallback(
+    (query: string) => {
+      if (searchHistoryLimit <= 0) return;
+      const { history, pinned } = searchHistoryRef.current;
+      const nextHistory = recordQuery(history, pinned, query, searchHistoryLimit);
+      if (
+        nextHistory.length === history.length &&
+        nextHistory.every((entry, index) => entry === history[index])
+      ) {
+        return;
+      }
+      applySearchHistory({ history: nextHistory, pinned });
+    },
+    [searchHistoryLimit, applySearchHistory],
+  );
+
+  const handleSearchChange = useCallback((text: string) => {
+    setSearchQuery(text);
+    if (text.length > 0) setShowSearchHistory(false);
+  }, []);
+
+  const handleClearSearch = useCallback(() => {
+    haptics.light();
+    setSearchQuery('');
+  }, []);
+
+  const handleSelectHistoryQuery = useCallback(
+    (query: string) => {
+      haptics.light();
+      setSearchQuery(query);
+      setShowSearchHistory(false);
+      recordSearch(query);
+    },
+    [recordSearch],
+  );
+
+  const handleToggleHistoryPin = useCallback(
+    (query: string) => {
+      haptics.light();
+      const { history, pinned } = searchHistoryRef.current;
+      const next = togglePin(history, pinned, query, searchHistoryLimit);
+      if (next.history === history && next.pinned === pinned) {
+        showToast(t('screens.torrents.pinLimitReached', { max: MAX_PINNED_SEARCHES }), 'info');
+        return;
+      }
+      applySearchHistory(next);
+    },
+    [searchHistoryLimit, applySearchHistory, showToast, t],
+  );
+
+  const handleRemoveHistoryQuery = useCallback(
+    (query: string) => {
+      haptics.light();
+      const { history, pinned } = searchHistoryRef.current;
+      applySearchHistory(removeQuery(history, pinned, query));
+    },
+    [applySearchHistory],
+  );
+
+  const handleClearRecentSearches = useCallback(() => {
+    haptics.light();
+    applySearchHistory(clearUnpinned(searchHistoryRef.current.pinned));
+  }, [applySearchHistory]);
+
+  const searchHistoryEntries = useMemo(
+    () => getHistoryEntries(searchHistory.history, searchHistory.pinned),
+    [searchHistory],
+  );
+  // Shown whenever history is on, even before anything is saved — otherwise
+  // the feature is invisible until you happen to trigger it (the dropdown
+  // explains how searches get saved).
+  const canShowSearchHistory = searchHistoryLimit > 0;
+
+  // Close the dropdown whenever its trigger disappears (history switched off,
+  // select mode entered, text typed or applied).
+  useEffect(() => {
+    if (showSearchHistory && (!canShowSearchHistory || selectMode || searchQuery.length > 0)) {
+      setShowSearchHistory(false);
+    }
+  }, [showSearchHistory, canShowSearchHistory, selectMode, searchQuery]);
+
   // Check for filter + card view mode preference changes on screen focus
   useFocusEffect(
     useCallback(() => {
@@ -242,6 +391,19 @@ export default function TorrentsScreen() {
           setDefaultTagColor(prefs.defaultTagColor || DEFAULT_PREFERENCES.defaultTagColor);
           setCategoryColors(prefs.categoryColors || {});
           setTagColors(prefs.tagColors || {});
+          // Reloaded on focus so a limit changed in Settings → Appearance
+          // (which also trims the stored history) takes effect immediately.
+          const storedHistory: SearchHistoryState = {
+            history: Array.isArray(prefs.torrentSearchHistory) ? prefs.torrentSearchHistory : [],
+            pinned: Array.isArray(prefs.torrentSearchPinned) ? prefs.torrentSearchPinned : [],
+          };
+          searchHistoryRef.current = storedHistory;
+          setSearchHistory(storedHistory);
+          setSearchHistoryLimit(
+            typeof prefs.torrentSearchHistoryLimit === 'number'
+              ? prefs.torrentSearchHistoryLimit
+              : DEFAULT_PREFERENCES.torrentSearchHistoryLimit,
+          );
         } catch {
           // ignore
         }
@@ -359,6 +521,7 @@ export default function TorrentsScreen() {
       }
 
       setTorrentUrl(magnetLink);
+      setSourcePlugin(null);
       setShowAddModal(true);
       router.setParams({ magnet: undefined });
     };
@@ -370,11 +533,17 @@ export default function TorrentsScreen() {
   // already decided the variant before navigating here, so unlike the magnet
   // handoff above this never redirects to the full screen. Uses a distinct
   // sourceUrl param (set verbatim, not run through extractMagnetLink) because
-  // Search results are often plain https:// download URLs, not magnets.
+  // Search results are often plain https:// download URLs, not magnets. A
+  // result only its own plugin can resolve also brings a sourcePlugin param,
+  // remembered with the URL so submit can hand the add to that plugin (#284).
   useEffect(() => {
     const rawSourceUrl = Array.isArray(params.sourceUrl) ? params.sourceUrl[0] : params.sourceUrl;
     const sourceUrl = rawSourceUrl?.trim();
     if (!sourceUrl) return;
+    const rawSourcePlugin = Array.isArray(params.sourcePlugin)
+      ? params.sourcePlugin[0]
+      : params.sourcePlugin;
+    const pluginName = rawSourcePlugin?.trim();
 
     const now = Date.now();
     if (
@@ -387,9 +556,10 @@ export default function TorrentsScreen() {
     lastAppliedSourceUrlRef.current = { value: sourceUrl, at: now };
 
     setTorrentUrl(sourceUrl);
+    setSourcePlugin(pluginName ? { url: sourceUrl, plugin: pluginName } : null);
     setShowAddModal(true);
-    router.setParams({ sourceUrl: undefined });
-  }, [params.sourceUrl, router]);
+    router.setParams({ sourceUrl: undefined, sourcePlugin: undefined });
+  }, [params.sourceUrl, params.sourcePlugin, router]);
 
   useEffect(() => {
     const fileUri = Array.isArray(params.torrentFileUri)
@@ -841,22 +1011,46 @@ export default function TorrentsScreen() {
         firstLastPiecePrio: Number(prefs.defaultPriority) > 0,
       };
 
+      // A Search result only its plugin can resolve (HTML page → magnet, …) must be
+      // fetched by that plugin, or qBittorrent downloads the page, fails to parse
+      // it and still answers 200 (#284). Only for the untouched pre-filled URL.
+      const downloader = getPrefilledDownloader(urls, sourcePlugin);
+      const plan = planPluginUrlAdd(downloader, apiClient.getApiFeatures());
+
       const tasks: Promise<void>[] = [];
       if (selectedFiles.length > 0) {
         tasks.push(torrentsApi.addTorrentFile(selectedFiles, addOptions));
       }
       if (urls.length > 0) {
-        tasks.push(torrentsApi.addTorrent(urls, addOptions));
+        if (plan === 'searchDownloadTorrent' && downloader) {
+          tasks.push(searchApi.downloadTorrent(urls[0], downloader));
+        } else {
+          tasks.push(
+            torrentsApi.addTorrent(
+              urls,
+              plan === 'addWithDownloader' ? { ...addOptions, downloader } : addOptions,
+            ),
+          );
+        }
       }
       await Promise.all(tasks);
 
       haptics.success();
       setTorrentUrl('');
+      setSourcePlugin(null);
       setSelectedFiles([]);
       setShowAddModal(false);
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       refresh();
-      showToast(t('toast.torrentAdded', { count: urls.length + selectedFiles.length }), 'success');
+      if (plan === 'searchDownloadTorrent') {
+        // search/downloadTorrent takes no options — say so rather than a plain "added".
+        showToast(t('toast.pluginAddDefaultOptions'), 'info', 6000);
+      } else {
+        showToast(
+          t('toast.torrentAdded', { count: urls.length + selectedFiles.length }),
+          'success',
+        );
+      }
     } catch (error: unknown) {
       haptics.error();
       showToast(getErrorMessage(error), 'error');
@@ -1261,7 +1455,13 @@ export default function TorrentsScreen() {
             )}
 
             {/* Search bar with Sort button */}
-            <View style={styles.searchRow}>
+            <View
+              style={styles.searchRow}
+              onLayout={(e) => {
+                const { x, y, height } = e.nativeEvent.layout;
+                setSearchRowLayout({ x, y, height });
+              }}
+            >
               {/* LEFT: Sort button — fixed 42×42 */}
               {!selectMode && (
                 <TouchableOpacity
@@ -1272,7 +1472,10 @@ export default function TorrentsScreen() {
                       borderColor: colors.surface,
                     },
                   ]}
-                  onPress={() => setShowSortMenu(!showSortMenu)}
+                  onPress={() => {
+                    setShowSortMenu(!showSortMenu);
+                    setShowSearchHistory(false);
+                  }}
                   activeOpacity={0.7}
                   accessibilityLabel={t('screens.settings.sortBy')}
                 >
@@ -1294,6 +1497,7 @@ export default function TorrentsScreen() {
                     borderColor: colors.surfaceOutline,
                   },
                 ]}
+                onLayout={(e) => setSearchInputX(e.nativeEvent.layout.x)}
               >
                 <Ionicons
                   name="search"
@@ -1305,9 +1509,36 @@ export default function TorrentsScreen() {
                   style={[styles.searchInputCompact, { color: colors.text }]}
                   placeholder={t('placeholders.searchTorrents')}
                   value={searchQuery}
-                  onChangeText={setSearchQuery}
+                  onChangeText={handleSearchChange}
+                  onSubmitEditing={() => recordSearch(searchQuery)}
+                  returnKeyType="search"
                   placeholderTextColor={colors.textSecondary}
                 />
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity
+                    onPress={handleClearSearch}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    accessibilityLabel={t('common.clearSearch')}
+                  >
+                    <Ionicons name="close-circle" size={18} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                )}
+                {searchQuery.length === 0 && canShowSearchHistory && !selectMode && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setShowSearchHistory(!showSearchHistory);
+                      setShowSortMenu(false);
+                    }}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    accessibilityLabel={t('screens.torrents.recentSearches')}
+                  >
+                    <Ionicons
+                      name="time-outline"
+                      size={18}
+                      color={showSearchHistory ? colors.primary : colors.textSecondary}
+                    />
+                  </TouchableOpacity>
+                )}
                 {isLoading && (
                   <ActivityIndicator
                     size="small"
@@ -1463,6 +1694,22 @@ export default function TorrentsScreen() {
                 )}
               </ScrollView>
             </View>
+
+            {/* Recent searches dropdown — sits under the search field (#282) */}
+            {showSearchHistory && canShowSearchHistory && !selectMode && (
+              <SearchHistoryDropdown
+                entries={searchHistoryEntries}
+                onSelect={handleSelectHistoryQuery}
+                onTogglePin={handleToggleHistoryPin}
+                onRemove={handleRemoveHistoryQuery}
+                onClearRecent={handleClearRecentSearches}
+                style={{
+                  top: searchRowLayout.y + searchRowLayout.height + spacing.xs,
+                  left: searchRowLayout.x + searchInputX,
+                  right: searchRowLayout.x,
+                }}
+              />
+            )}
 
             {/* Sort options dropdown - positioned near search bar */}
             {showSortMenu && !selectMode && (
@@ -1884,8 +2131,12 @@ export default function TorrentsScreen() {
             }}
             refreshControl={
               <RefreshControl
-                refreshing={isLoading}
-                onRefresh={refresh}
+                refreshing={isPullRefreshing}
+                onRefresh={handlePullRefresh}
+                // The header is an absolute overlay (see headerContainer), so
+                // push the spinner below it instead of under the search box.
+                // selectMode's header is in-flow and needs no offset.
+                progressViewOffset={selectMode ? 0 : headerHeight}
                 tintColor={colors.primary}
               />
             }
@@ -1971,6 +2222,7 @@ export default function TorrentsScreen() {
                       onPress={() => {
                         setShowAddModal(false);
                         setTorrentUrl('');
+                        setSourcePlugin(null);
                         setSelectedFiles([]);
                       }}
                       accessibilityLabel={t('common.close')}
@@ -2087,6 +2339,7 @@ export default function TorrentsScreen() {
                       ]}
                       onPress={() => {
                         setTorrentUrl('');
+                        setSourcePlugin(null);
                         setSelectedFiles([]);
                         setShowAddModal(false);
                       }}

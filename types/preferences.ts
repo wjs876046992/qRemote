@@ -69,6 +69,15 @@ export interface AppPreferences {
   /** Per-theme color overrides, keyed by 'dark' | 'light' */
   customColors: Record<string, ColorTheme>;
 
+  /**
+   * Id of the theme preset last applied from Settings → Theme (#286). Optional
+   * and written only when the user applies a preset — absent for everyone who
+   * has never picked one. It is a hint, not the source of truth: whether a
+   * preset is "selected" is decided by comparing `customColors` against that
+   * preset (see `getThemePresetSelection`), so a stale id can't mislabel anything.
+   */
+  themePresetId?: string;
+
   /** Default sticker color applied to every category that has no per-name override */
   defaultCategoryColor: string;
 
@@ -96,6 +105,18 @@ export interface AppPreferences {
    * preference migration system is in place.
    */
   cardViewMode: 'compact' | 'expanded';
+
+  /**
+   * Recent (unpinned) queries typed into the Torrents tab search box, newest
+   * first. Capped by `torrentSearchHistoryLimit` (#282).
+   */
+  torrentSearchHistory: string[];
+
+  /** Pinned Torrents-tab searches (max 10). Not counted toward the history limit. */
+  torrentSearchPinned: string[];
+
+  /** How many recent searches to keep. 0 turns the history off. */
+  torrentSearchHistoryLimit: number;
 
   /** Whether newly added torrents start paused */
   pauseOnAdd: boolean;
@@ -186,6 +207,13 @@ export interface AppPreferences {
   searchInMode?: SearchInMode;
 
   /**
+   * Search tab: `name` ids of the plugins the user pinned (#283). Pinned
+   * plugins' chips are listed first in the plugin chip row. Names that are no
+   * longer installed are ignored (and pruned the next time the pins change).
+   */
+  searchPinnedPlugins?: string[];
+
+  /**
    * Last active category filter on the torrents tab.
    * null = All categories; '' = Uncategorized (torrents with no category set).
    */
@@ -207,6 +235,9 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   defaultSortDirection: 'desc',
   defaultFilter: 'all',
   cardViewMode: 'compact',
+  torrentSearchHistory: [],
+  torrentSearchPinned: [],
+  torrentSearchHistoryLimit: 5,
   pauseOnAdd: false,
   defaultSavePath: '',
   lastUseDownloadPath: false,
@@ -270,6 +301,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   searchHideZeroSeeders: false,
   searchGroupDuplicates: true,
   searchInMode: 'everywhere',
+  searchPinnedPlugins: [],
   lastCategoryFilter: null,
   lastTagFilters: [],
 };

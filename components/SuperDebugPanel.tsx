@@ -259,7 +259,11 @@ export function SuperDebugPanel({
 
   const buildUrl = useCallback((): string => {
     const protocol = useHttps ? 'https' : 'http';
-    const clean = sanitizeHost(host);
+    // Same split as services/api/client.ts: a path typed into Host goes after the port.
+    const sanitized = sanitizeHost(host);
+    const hostSlash = sanitized.indexOf('/');
+    const clean = hostSlash === -1 ? sanitized : sanitized.slice(0, hostSlash);
+    const hostPath = hostSlash === -1 ? '' : sanitized.slice(hostSlash).replace(/\/+$/, '');
     const portNum = port.trim() ? parseInt(port, 10) : undefined;
     const portPart = portNum && portNum > 0 && !isNaN(portNum) ? `:${portNum}` : '';
     const trimmedPath = basePath.trim().replace(/\/+$/, '');
@@ -268,7 +272,7 @@ export function SuperDebugPanel({
         ? trimmedPath
         : `/${trimmedPath}`
       : '';
-    return `${protocol}://${clean}${portPart}${pathPart}`;
+    return `${protocol}://${clean}${portPart}${hostPath}${pathPart}`;
   }, [host, port, useHttps, basePath]);
 
   /** Mask a qui proxy key anywhere in text that is displayed, copied or exported. */
@@ -527,7 +531,9 @@ export function SuperDebugPanel({
     addEntry('INFO', `Opening login endpoint: ${url}`, 'info');
     addEntry(
       'INFO',
-      'If the server is working, the browser will show "Fails." (because no credentials were sent). That confirms the API endpoint is reachable.',
+      useQuiProxy
+        ? 'If the proxy URL is right, the browser will show "Method Not Allowed" (login only accepts POST). That confirms qui accepted the key. "Invalid API key" means the key is wrong.'
+        : 'If the server is working, the browser will show "Fails." (because no credentials were sent). That confirms the API endpoint is reachable.',
       'info',
     );
     try {
@@ -551,7 +557,8 @@ export function SuperDebugPanel({
       addEntry('ERROR', 'Host field is empty. Enter an IP or domain above first.', 'error');
       return;
     }
-    if (!bypassAuth && !useApiKey && (!username.trim() || !password.trim())) {
+    // qui mode hides the username/password fields — its key is in the URL.
+    if (!bypassAuth && !useApiKey && !useQuiProxy && (!username.trim() || !password.trim())) {
       addEntry(
         'ERROR',
         'Username and password are required. Fill them in above, or choose a different authentication method.',
@@ -869,6 +876,14 @@ export function SuperDebugPanel({
             addEntry(
               'WARN',
               'API key authentication was rejected. Possible causes:\n  1. The key was mistyped or copied incorrectly\n  2. The key was rotated in qBittorrent since it was entered here\n  3. Your qBittorrent version is older than 5.2.0 / WebAPI 2.14.1 (API keys are not supported)\n\nCheck: Preferences > WebUI > API Key in qBittorrent.',
+              'warning',
+            );
+          } else if (useQuiProxy) {
+            // qui accepted the key (a bad key is 401, above) and forwarded the
+            // request — this 403 is qBittorrent rejecting qui's own session.
+            addEntry(
+              'WARN',
+              "qui accepted the proxy key, but qBittorrent rejected qui's session. Check that the instance is connected and its credentials are correct in qui.",
               'warning',
             );
           } else if (!bypassAuth && !sessionCookie) {
