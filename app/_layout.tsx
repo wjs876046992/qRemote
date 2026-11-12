@@ -3,8 +3,8 @@ import * as ExpoLinking from 'expo-linking';
 import { ErrorBoundaryProps, Stack, useRootNavigationState, useRouter } from 'expo-router';
 import {
   Dimensions,
-  InteractionManager,
   Linking,
+  ScrollView,
   Text,
   TouchableOpacity,
   useColorScheme,
@@ -35,6 +35,7 @@ import {
 import { extractMagnetLink } from '@/utils/magnet';
 import { extractTorrentFile, IncomingTorrentFile } from '@/utils/torrent-file';
 import { persistIncomingTorrentFile } from '@/services/incoming-file';
+import { runAfterInteractions } from '@/utils/afterInteractions';
 
 const { width } = Dimensions.get('window');
 
@@ -44,7 +45,6 @@ const { width } = Dimensions.get('window');
 // full-screen route with no bottom tab bar. Settings and torrent detail
 // live under (tabs) so the tab bar stays visible there.
 export const unstable_settings = {
-  initialRouteName: '(tabs)',
   anchor: '(tabs)',
 };
 
@@ -67,10 +67,12 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
   const muted = isDark ? '#9E9E9E' : '#6B6B6B';
 
   return (
-    <View
-      style={{
-        flex: 1,
-        backgroundColor: bg,
+    // Scrolls so a long error message can be read in full instead of running
+    // off-screen (#293).
+    <ScrollView
+      style={{ flex: 1, backgroundColor: bg }}
+      contentContainerStyle={{
+        flexGrow: 1,
         alignItems: 'center',
         justifyContent: 'center',
         padding: 24,
@@ -114,7 +116,7 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
           {t('common.retry', { defaultValue: 'Try Again' })}
         </Text>
       </TouchableOpacity>
-    </View>
+    </ScrollView>
   );
 }
 
@@ -146,7 +148,7 @@ function StackNavigator() {
 
   useEffect(() => {
     const navigateToMagnet = (magnetLink: string) => {
-      InteractionManager.runAfterInteractions(() => {
+      runAfterInteractions(() => {
         router.replace({
           pathname: '/',
           params: { magnet: magnetLink },
@@ -155,7 +157,7 @@ function StackNavigator() {
     };
 
     const navigateToTorrentFile = (torrentFile: IncomingTorrentFile) => {
-      InteractionManager.runAfterInteractions(() => {
+      runAfterInteractions(() => {
         router.replace({
           pathname: '/',
           params: { torrentFileUri: torrentFile.uri, torrentFileName: torrentFile.name },
