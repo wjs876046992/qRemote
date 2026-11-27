@@ -22,17 +22,21 @@ import { Ionicons } from '@expo/vector-icons';
 import { useServer } from '@/context/ServerContext';
 import { useToast } from '@/context/ToastContext';
 import { useTheme, ThemeColors } from '@/context/ThemeContext';
+import { GlassSurface } from '@/components/GlassSurface';
+import { useReadableLayout, useTabBarInset } from '@/hooks/useReadableLayout';
 import { FocusAwareStatusBar } from '@/components/FocusAwareStatusBar';
 import { ServerIconBadge } from '@/components/ServerIconBadge';
 import { ServerManager } from '@/services/server-manager';
 import { APP_VERSION } from '@/utils/version';
-import { getErrorMessage } from '@/utils/error';
+import { getErrorMessage, isSupersededConnectError } from '@/utils/error';
 import { localizeErrorMessage } from '@/utils/localize-error';
 import { hasFallback } from '@/utils/server';
 import { spacing, borderRadius } from '@/constants/spacing';
 import { shadows } from '@/constants/shadows';
 import { typography } from '@/constants/typography';
 import { colorThemeManager } from '@/services/color-theme-manager';
+import { useSettingsSplit } from '@/context/PaneLayoutContext';
+import { withAlpha } from '@/utils/color';
 
 const APP_STORE_URL = 'https://apps.apple.com/us/app/qremote-for-qbittorrent/id6756276747';
 
@@ -42,15 +46,33 @@ interface NavRowProps {
   icon: IconName;
   label: string;
   onPress: () => void;
+  /** Settings route this row opens; highlights the row while it's open in the two-pane layout. */
+  route?: string;
   colors: ThemeColors;
   isLast?: boolean;
   iconColor?: string;
 }
 
-function NavRow({ icon, label, onPress, colors, isLast, iconColor }: NavRowProps) {
+function NavRow({ icon, label, onPress, route, colors, isLast, iconColor }: NavRowProps) {
+  const split = useSettingsSplit();
+  const router = useRouter();
+  const selected = split.active && !!route && split.pathname.startsWith(route);
+  const press = () => {
+    // Two-pane: swap the right pane's screen instead of stacking them.
+    if (split.active && route && split.pathname !== '/settings') {
+      router.replace(route as never);
+    } else {
+      onPress();
+    }
+  };
   return (
     <>
-      <TouchableOpacity style={styles.navRow} onPress={onPress} activeOpacity={0.7}>
+      <TouchableOpacity
+        style={[styles.navRow, selected && { backgroundColor: withAlpha(colors.primary, 0.18) }]}
+        onPress={press}
+        activeOpacity={0.7}
+        accessibilityState={{ selected }}
+      >
         <View style={styles.navLeft}>
           <Ionicons name={icon} size={22} color={iconColor || colors.primary} />
           <Text style={[styles.navLabel, { color: colors.text }]}>{label}</Text>
@@ -110,13 +132,40 @@ function ExternalRow({
   );
 }
 
+/**
+ * The Settings route. On wide windows the menu lives in the layout's left
+ * column, so the route itself (shown in the right pane) is a placeholder.
+ */
 export default function SettingsScreen() {
+  const split = useSettingsSplit();
+  const { colors } = useTheme();
+  const { t } = useTranslation();
+  if (split.active) {
+    return (
+      <View style={styles.splitPlaceholder}>
+        <Ionicons name="settings-outline" size={48} color={colors.textSecondary} />
+        <Text style={[styles.splitPlaceholderText, { color: colors.textSecondary }]}>
+          {t('screens.settings.splitPlaceholder')}
+        </Text>
+      </View>
+    );
+  }
+  return <SettingsHub />;
+}
+
+/** The Settings menu itself. */
+export function SettingsHub() {
   const { t } = useTranslation();
   const router = useRouter();
   const { currentServer, isConnected, activeEndpoint, disconnect, connectToServer, isLoading } =
     useServer();
   const { showToast } = useToast();
   const { isDark, colors } = useTheme();
+  // tabBarInset: this screen runs under the floating glass tab bar (0 with the
+  // JS tab bar), so its content is inset to let the last row scroll clear.
+  const tabBarInset = useTabBarInset();
+  // Wide windows (iPhone Duo, iPad): center the rows in a readable column.
+  const readable = useReadableLayout();
   const [hasServers, setHasServers] = useState(false);
   const disconnectBadgeBackground = colorThemeManager.hexToRgba(
     colorThemeManager.rgbaToHex(colors.error),
@@ -171,6 +220,7 @@ export default function SettingsScreen() {
         showToast(t('errors.failedToConnect'), 'error');
       }
     } catch (error) {
+      if (isSupersededConnectError(error)) return; // a newer connect/disconnect took over
       showToast(localizeErrorMessage(getErrorMessage(error), t), 'error');
     }
   };
@@ -187,7 +237,13 @@ export default function SettingsScreen() {
   return (
     <>
       <FocusAwareStatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
-      <ScrollView style={[styles.container, { backgroundColor: colors.background }]}>
+      <ScrollView
+        style={[styles.container, { backgroundColor: colors.background }]}
+        contentContainerStyle={readable.contentStyle(
+          tabBarInset > 0 ? { paddingBottom: tabBarInset } : undefined,
+        )}
+        scrollIndicatorInsets={tabBarInset > 0 ? { bottom: tabBarInset } : undefined}
+      >
         {/* Connection Status Card */}
         {hasServers && currentServer ? (
           <View style={styles.section}>
@@ -305,35 +361,40 @@ export default function SettingsScreen() {
 
         {/* Navigation Rows */}
         <View style={styles.section}>
-          <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <GlassSurface glass={false} style={[styles.card, { backgroundColor: colors.surface }]}>
             <NavRow
               icon="server-outline"
               label={t('screens.settings.servers')}
               onPress={() => router.push('/settings/servers')}
+              route="/settings/servers"
               colors={colors}
             />
             <NavRow
               icon="color-palette-outline"
               label={t('screens.settings.appearance')}
               onPress={() => router.push('/settings/appearance')}
+              route="/settings/appearance"
               colors={colors}
             />
             <NavRow
               icon="options-outline"
               label={t('screens.settings.serverSettings')}
               onPress={() => router.push('/settings/torrent-defaults')}
+              route="/settings/torrent-defaults"
               colors={colors}
             />
             <NavRow
               icon="git-network-outline"
               label={t('screens.settings.connectionSettings')}
               onPress={() => router.push('/settings/connection')}
+              route="/settings/connection"
               colors={colors}
             />
             <NavRow
               icon="logo-rss"
               label={t('screens.settings.rss')}
               onPress={() => router.push('/settings/rss')}
+              route="/settings/rss"
               colors={colors}
             />
             <NavRow
@@ -346,35 +407,38 @@ export default function SettingsScreen() {
               icon="construct-outline"
               label={t('screens.settings.advanced')}
               onPress={() => router.push('/settings/advanced')}
+              route="/settings/advanced"
               colors={colors}
               isLast
             />
-          </View>
+          </GlassSurface>
         </View>
 
         <View style={styles.section}>
-          <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <GlassSurface glass={false} style={[styles.card, { backgroundColor: colors.surface }]}>
             <NavRow
               icon="sparkles-outline"
               label={t('screens.settings.whatsNew')}
               onPress={() => router.push('/settings/whats-new')}
+              route="/settings/whats-new"
               colors={colors}
             />
             <NavRow
               icon="information-circle-outline"
               label={t('screens.settings.about')}
               onPress={() => router.push('/settings/about')}
+              route="/settings/about"
               colors={colors}
               isLast
             />
-          </View>
+          </GlassSurface>
         </View>
 
         <View style={styles.section}>
           <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
             {t('screens.settings.community').toUpperCase()}
           </Text>
-          <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <GlassSurface glass={false} style={[styles.card, { backgroundColor: colors.surface }]}>
             <ExternalRow
               icon="logo-github"
               label={t('screens.settings.sourceCode')}
@@ -405,7 +469,7 @@ export default function SettingsScreen() {
               icon="thumbs-up-outline"
               isLast
             />
-          </View>
+          </GlassSurface>
         </View>
 
         {/* App Version */}
@@ -420,6 +484,8 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
+  splitPlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md },
+  splitPlaceholderText: { ...typography.body, textAlign: 'center', paddingHorizontal: spacing.xl },
   container: {
     flex: 1,
   },

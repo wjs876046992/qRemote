@@ -1,27 +1,24 @@
 import '@/i18n';
 import * as ExpoLinking from 'expo-linking';
-import { ErrorBoundaryProps, Stack, useRootNavigationState, useRouter } from 'expo-router';
-import {
-  Dimensions,
-  Linking,
-  ScrollView,
-  Text,
-  TouchableOpacity,
-  useColorScheme,
-  View,
-} from 'react-native';
+import { Stack, useRootNavigationState, useRouter } from 'expo-router';
+import { useWindowDimensions, Linking, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useEffect, useRef } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '@/services/query-client';
+import { AppErrorBoundary } from '@/components/AppErrorBoundary';
+
+// Root fallback when a render throws anywhere above the tabs.
+export { AppErrorBoundary as ErrorBoundary };
 import { ServerProvider } from '@/context/ServerContext';
 import { ApiVersionProvider } from '@/context/ApiVersionContext';
 import { TorrentProvider } from '@/context/TorrentContext';
 import { TransferProvider } from '@/context/TransferContext';
 import { ThemeProvider, useTheme } from '@/context/ThemeContext';
 import { ToastProvider, useToast } from '@/context/ToastContext';
+import { LiquidGlassProvider } from '@/context/LiquidGlassContext';
 import { SearchCartProvider } from '@/context/SearchCartContext';
 import { storageService } from '@/services/storage';
 import { apiClient } from '@/services/api/client';
@@ -37,8 +34,6 @@ import { extractTorrentFile, IncomingTorrentFile } from '@/utils/torrent-file';
 import { persistIncomingTorrentFile } from '@/services/incoming-file';
 import { runAfterInteractions } from '@/utils/afterInteractions';
 
-const { width } = Dimensions.get('window');
-
 // Keep (tabs) as the stack anchor so pushing server/add routes (and
 // deep-linking to them) never wipes the tab navigator out of history —
 // without this, dismissing a modal or going back can leave the user on a
@@ -48,80 +43,11 @@ export const unstable_settings = {
   anchor: '(tabs)',
 };
 
-/**
- * Expo Router renders this in place of the route tree when a render throws.
- * Without it an uncaught error leaves a blank screen with no way out but a
- * force-quit.
- *
- * This is the one component in the app that does NOT use `useTheme()`
- * (AGENTS.md rule 1). It is mounted above ThemeProvider, so if the theme is
- * what failed, calling useTheme() here would throw again and leave no boundary
- * at all. It follows the system colour scheme instead. Strings use
- * `defaultValue` for the same reason — i18n may be the thing that broke.
- */
-export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
-  const { t } = useTranslation();
-  const isDark = useColorScheme() === 'dark';
-  const bg = isDark ? '#000000' : '#FFFFFF';
-  const fg = isDark ? '#FFFFFF' : '#000000';
-  const muted = isDark ? '#9E9E9E' : '#6B6B6B';
-
-  return (
-    // Scrolls so a long error message can be read in full instead of running
-    // off-screen (#293).
-    <ScrollView
-      style={{ flex: 1, backgroundColor: bg }}
-      contentContainerStyle={{
-        flexGrow: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 24,
-      }}
-    >
-      <Text
-        style={{
-          fontSize: 20,
-          fontWeight: '600',
-          color: fg,
-          textAlign: 'center',
-          marginBottom: 12,
-        }}
-      >
-        {t('errors.crashTitle', { defaultValue: 'Something went wrong' })}
-      </Text>
-      <Text style={{ fontSize: 15, color: muted, textAlign: 'center', marginBottom: 20 }}>
-        {t('errors.crashMessage', {
-          defaultValue: 'qRemote ran into an unexpected error. Your servers and settings are safe.',
-        })}
-      </Text>
-      {!!error?.message && (
-        <Text
-          selectable
-          style={{ fontSize: 12, color: muted, textAlign: 'center', marginBottom: 28 }}
-        >
-          {error.message}
-        </Text>
-      )}
-      <TouchableOpacity
-        onPress={retry}
-        accessibilityRole="button"
-        style={{
-          backgroundColor: '#0A84FF',
-          paddingVertical: 12,
-          paddingHorizontal: 28,
-          borderRadius: 10,
-        }}
-      >
-        <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: '600' }}>
-          {t('common.retry', { defaultValue: 'Try Again' })}
-        </Text>
-      </TouchableOpacity>
-    </ScrollView>
-  );
-}
-
 function StackNavigator() {
   const { colors } = useTheme();
+  // Live window width (it changes on iPhone Duo fold / unfold): the back-swipe
+  // region is the left half of the current window.
+  const { width } = useWindowDimensions();
   const { t } = useTranslation();
   const { showToast } = useToast();
   const router = useRouter();
@@ -343,21 +269,23 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ThemeProvider>
-          <QueryClientProvider client={queryClient}>
-            <ToastProvider>
-              <ServerProvider>
-                <ApiVersionProvider>
-                  <TorrentProvider>
-                    <TransferProvider>
-                      <SearchCartProvider>
-                        <StackNavigator />
-                      </SearchCartProvider>
-                    </TransferProvider>
-                  </TorrentProvider>
-                </ApiVersionProvider>
-              </ServerProvider>
-            </ToastProvider>
-          </QueryClientProvider>
+          <LiquidGlassProvider>
+            <QueryClientProvider client={queryClient}>
+              <ToastProvider>
+                <ServerProvider>
+                  <ApiVersionProvider>
+                    <TorrentProvider>
+                      <TransferProvider>
+                        <SearchCartProvider>
+                          <StackNavigator />
+                        </SearchCartProvider>
+                      </TransferProvider>
+                    </TorrentProvider>
+                  </ApiVersionProvider>
+                </ServerProvider>
+              </ToastProvider>
+            </QueryClientProvider>
+          </LiquidGlassProvider>
         </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

@@ -12,6 +12,9 @@ import { useTranslation } from 'react-i18next';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/context/ThemeContext';
+import { GlassSurface } from '@/components/GlassSurface';
+import { GlassHeaderBackdrop } from '@/components/GlassHeaderBackdrop';
+import { useGlassTabScreenLayout } from '@/hooks/useGlassTabScreenLayout';
 import { useToast } from '@/context/ToastContext';
 import { useServer } from '@/context/ServerContext';
 import { useApiFeatures } from '@/context/ApiVersionContext';
@@ -48,6 +51,7 @@ export default function ConnectionSettingsScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const { isDark, colors } = useTheme();
+  const glassLayout = useGlassTabScreenLayout();
   const { showToast } = useToast();
   const { isConnected } = useServer();
   const { features } = useApiFeatures();
@@ -296,7 +300,15 @@ export default function ConnectionSettingsScreen() {
     <>
       <FocusAwareStatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <View style={[styles.header, { borderBottomColor: colors.surfaceOutline }]}>
+        <View
+          style={[
+            styles.header,
+            { borderBottomColor: colors.surfaceOutline },
+            glassLayout.headerStyle,
+          ]}
+          onLayout={glassLayout.onHeaderLayout}
+        >
+          <GlassHeaderBackdrop borderOverlap={1} />
           <TouchableOpacity
             onPress={() => router.back()}
             style={styles.headerButton}
@@ -312,15 +324,22 @@ export default function ConnectionSettingsScreen() {
         </View>
 
         {!isConnected ? (
-          <EmptyState subtitle={t('toast.notConnected')} />
+          <EmptyState subtitle={t('toast.notConnected')} style={glassLayout.bodyStyle} />
         ) : (
-          <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+          <ScrollView
+            style={styles.scrollView}
+            contentContainerStyle={glassLayout.contentStyle(styles.scrollContent)}
+            scrollIndicatorInsets={glassLayout.scrollIndicatorInsets}
+          >
             {/* Peer Connection Protocol */}
             <View style={styles.section}>
               <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
                 {t('screens.settings.peerConnectionProtocol').toUpperCase()}
               </Text>
-              <View style={[styles.card, { backgroundColor: colors.surface }]}>
+              <GlassSurface
+                glass={false}
+                style={[styles.card, { backgroundColor: colors.surface }]}
+              >
                 <View style={styles.settingRow}>
                   <View style={styles.settingLeft}>
                     <Ionicons name="shuffle-outline" size={22} color={colors.primary} />
@@ -411,7 +430,7 @@ export default function ConnectionSettingsScreen() {
                     ios_backgroundColor={colors.surfaceOutline}
                   />
                 </View>
-              </View>
+              </GlassSurface>
             </View>
 
             {/* Connection Limits */}
@@ -419,7 +438,10 @@ export default function ConnectionSettingsScreen() {
               <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
                 {t('screens.settings.connectionLimits').toUpperCase()}
               </Text>
-              <View style={[styles.card, { backgroundColor: colors.surface }]}>
+              <GlassSurface
+                glass={false}
+                style={[styles.card, { backgroundColor: colors.surface }]}
+              >
                 {CONNECTION_LIMIT_KEYS.map((key, index) => {
                   const value = limits[key];
                   const isLimited = value !== -1;
@@ -476,7 +498,7 @@ export default function ConnectionSettingsScreen() {
                     </View>
                   );
                 })}
-              </View>
+              </GlassSurface>
             </View>
 
             {/* I2P */}
@@ -485,7 +507,10 @@ export default function ConnectionSettingsScreen() {
                 <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
                   {t('screens.settings.i2pSection').toUpperCase()}
                 </Text>
-                <View style={[styles.card, { backgroundColor: colors.surface }]}>
+                <GlassSurface
+                  glass={false}
+                  style={[styles.card, { backgroundColor: colors.surface }]}
+                >
                   <View style={styles.settingRow}>
                     <View style={styles.settingLeft}>
                       <Ionicons name="flask-outline" size={22} color={colors.primary} />
@@ -651,7 +676,7 @@ export default function ConnectionSettingsScreen() {
                       ))}
                     </>
                   )}
-                </View>
+                </GlassSurface>
               </View>
             )}
 
@@ -660,7 +685,10 @@ export default function ConnectionSettingsScreen() {
               <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
                 {t('screens.settings.proxyServer').toUpperCase()}
               </Text>
-              <View style={[styles.card, { backgroundColor: colors.surface }]}>
+              <GlassSurface
+                glass={false}
+                style={[styles.card, { backgroundColor: colors.surface }]}
+              >
                 <View style={styles.settingRow}>
                   <View style={styles.settingLeft}>
                     <Ionicons name="git-network-outline" size={22} color={colors.primary} />
@@ -975,7 +1003,7 @@ export default function ConnectionSettingsScreen() {
                     )}
                   </>
                 )}
-              </View>
+              </GlassSurface>
             </View>
 
             {/* IP Filtering */}
@@ -983,7 +1011,10 @@ export default function ConnectionSettingsScreen() {
               <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
                 {t('screens.settings.ipFiltering').toUpperCase()}
               </Text>
-              <View style={[styles.card, { backgroundColor: colors.surface }]}>
+              <GlassSurface
+                glass={false}
+                style={[styles.card, { backgroundColor: colors.surface }]}
+              >
                 <View style={styles.settingRow}>
                   <View style={styles.settingLeft}>
                     <Ionicons name="funnel-outline" size={22} color={colors.primary} />
@@ -1069,7 +1100,7 @@ export default function ConnectionSettingsScreen() {
                   </View>
                   <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
                 </TouchableOpacity>
-              </View>
+              </GlassSurface>
             </View>
 
             <View style={{ height: 40 }} />

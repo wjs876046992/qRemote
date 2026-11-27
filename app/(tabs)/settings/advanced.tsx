@@ -17,6 +17,9 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
 import { useTheme } from '@/context/ThemeContext';
+import { GlassSurface } from '@/components/GlassSurface';
+import { GlassHeaderBackdrop } from '@/components/GlassHeaderBackdrop';
+import { useGlassTabScreenLayout } from '@/hooks/useGlassTabScreenLayout';
 import { useServer } from '@/context/ServerContext';
 import { useToast } from '@/context/ToastContext';
 import { FocusAwareStatusBar } from '@/components/FocusAwareStatusBar';
@@ -39,6 +42,7 @@ export default function AdvancedSettingsScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const { isDark, colors } = useTheme();
+  const glassLayout = useGlassTabScreenLayout();
   const { isConnected } = useServer();
   const { showToast } = useToast();
 
@@ -194,7 +198,15 @@ export default function AdvancedSettingsScreen() {
     <>
       <FocusAwareStatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <View style={[styles.header, { borderBottomColor: colors.surfaceOutline }]}>
+        <View
+          style={[
+            styles.header,
+            { borderBottomColor: colors.surfaceOutline },
+            glassLayout.headerStyle,
+          ]}
+          onLayout={glassLayout.onHeaderLayout}
+        >
+          <GlassHeaderBackdrop borderOverlap={1} />
           <TouchableOpacity
             onPress={() => router.back()}
             style={styles.headerButton}
@@ -209,9 +221,13 @@ export default function AdvancedSettingsScreen() {
           <View style={styles.headerButton} />
         </View>
 
-        <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={glassLayout.contentStyle(styles.scrollContent)}
+          scrollIndicatorInsets={glassLayout.scrollIndicatorInsets}
+        >
           <View style={styles.section}>
-            <View style={[styles.card, { backgroundColor: colors.surface }]}>
+            <GlassSurface glass={false} style={[styles.card, { backgroundColor: colors.surface }]}>
               <TouchableOpacity
                 style={styles.settingRow}
                 onPress={() => router.push('/settings/notifications')}
@@ -225,7 +241,7 @@ export default function AdvancedSettingsScreen() {
                 </View>
                 <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
               </TouchableOpacity>
-            </View>
+            </GlassSurface>
           </View>
 
           {/* Connection */}
@@ -233,7 +249,7 @@ export default function AdvancedSettingsScreen() {
             <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
               {t('screens.settings.serverManagement').toUpperCase()}
             </Text>
-            <View style={[styles.card, { backgroundColor: colors.surface }]}>
+            <GlassSurface glass={false} style={[styles.card, { backgroundColor: colors.surface }]}>
               <View style={styles.settingRow}>
                 <View style={styles.settingLeft}>
                   <Ionicons name="timer-outline" size={22} color={colors.primary} />
@@ -325,7 +341,7 @@ export default function AdvancedSettingsScreen() {
                   placeholderTextColor={colors.textSecondary}
                 />
               </View>
-            </View>
+            </GlassSurface>
           </View>
 
           {/* Debug */}
@@ -333,7 +349,7 @@ export default function AdvancedSettingsScreen() {
             <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
               {t('screens.settings.debug')}
             </Text>
-            <View style={[styles.card, { backgroundColor: colors.surface }]}>
+            <GlassSurface glass={false} style={[styles.card, { backgroundColor: colors.surface }]}>
               <View style={styles.settingRow}>
                 <View style={styles.settingLeft}>
                   <Ionicons name="bug-outline" size={22} color={colors.primary} />
@@ -369,7 +385,7 @@ export default function AdvancedSettingsScreen() {
               <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
               <TouchableOpacity
                 style={styles.settingRow}
-                onPress={() => router.dismissTo('/(tabs)/logs')}
+                onPress={() => router.push('/settings/logs')}
                 activeOpacity={0.7}
               >
                 <View style={styles.settingLeft}>
@@ -380,7 +396,7 @@ export default function AdvancedSettingsScreen() {
                 </View>
                 <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
               </TouchableOpacity>
-            </View>
+            </GlassSurface>
           </View>
 
           {/* Backup & Restore */}
@@ -388,7 +404,7 @@ export default function AdvancedSettingsScreen() {
             <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
               {t('screens.settings.backupRestore').toUpperCase()}
             </Text>
-            <View style={[styles.card, { backgroundColor: colors.surface }]}>
+            <GlassSurface glass={false} style={[styles.card, { backgroundColor: colors.surface }]}>
               <TouchableOpacity style={styles.settingRow} onPress={exportSettings}>
                 <View style={styles.settingLeft}>
                   <Ionicons name="download-outline" size={22} color={colors.primary} />
@@ -408,7 +424,7 @@ export default function AdvancedSettingsScreen() {
                 </View>
                 <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
               </TouchableOpacity>
-            </View>
+            </GlassSurface>
           </View>
 
           {/* Danger Zone */}
@@ -417,7 +433,10 @@ export default function AdvancedSettingsScreen() {
               <Text style={[styles.sectionHeader, { color: colors.error }]}>
                 {t('screens.settings.dangerZone').toUpperCase()}
               </Text>
-              <View style={[styles.card, { backgroundColor: colors.surface }]}>
+              <GlassSurface
+                glass={false}
+                style={[styles.card, { backgroundColor: colors.surface }]}
+              >
                 <TouchableOpacity style={styles.dangerRow} onPress={handleShutdown}>
                   <View style={styles.dangerLeft}>
                     <Ionicons name="power-outline" size={22} color={colors.error} />
@@ -432,7 +451,7 @@ export default function AdvancedSettingsScreen() {
                   </View>
                   <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
                 </TouchableOpacity>
-              </View>
+              </GlassSurface>
             </View>
           )}
 

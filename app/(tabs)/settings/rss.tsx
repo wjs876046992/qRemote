@@ -14,6 +14,9 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTheme } from '@/context/ThemeContext';
+import { GlassSurface } from '@/components/GlassSurface';
+import { GlassHeaderBackdrop } from '@/components/GlassHeaderBackdrop';
+import { useGlassTabScreenLayout } from '@/hooks/useGlassTabScreenLayout';
 import { useServer } from '@/context/ServerContext';
 import { useToast } from '@/context/ToastContext';
 import { FocusAwareStatusBar } from '@/components/FocusAwareStatusBar';
@@ -31,13 +34,25 @@ export default function RssSettingsScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { isDark, colors } = useTheme();
+  const glassLayout = useGlassTabScreenLayout();
   const { isConnected } = useServer();
   const { showToast } = useToast();
 
-  const [prefs, setPrefs] = useState({
-    rss_processing_enabled: false,
-    rss_auto_downloading_enabled: false,
-    rss_download_repack_proper_episodes: false,
+  // Seeded from the tab layout's cached `app/preferences` (same query key) so
+  // the switches show the server's current values from the first render,
+  // including when this screen remounts while a toggle is being saved (with
+  // the native tab bar, showing or hiding the RSS tab remounts tab screens).
+  // Refreshed from the server on focus.
+  const [prefs, setPrefs] = useState(() => {
+    const cached = queryClient.getQueryData<Partial<Record<BoolPrefKey, unknown>>>([
+      'application',
+      'preferences',
+    ]);
+    return {
+      rss_processing_enabled: cached?.rss_processing_enabled === true,
+      rss_auto_downloading_enabled: cached?.rss_auto_downloading_enabled === true,
+      rss_download_repack_proper_episodes: cached?.rss_download_repack_proper_episodes === true,
+    };
   });
   const [saving, setSaving] = useState<BoolPrefKey | null>(null);
 
@@ -53,6 +68,9 @@ export default function RssSettingsScreen() {
   // per-keystroke) to avoid a setPreferences round-trip on every digit typed.
   const [refreshIntervalText, setRefreshIntervalText] = useState('');
   const [fetchDelayText, setFetchDelayText] = useState('');
+  // rss_fetch_delay is qBit 5.0+; older servers ignore it, so the row only
+  // shows once the server has reported the key.
+  const [hasFetchDelay, setHasFetchDelay] = useState(false);
   const [maxArticlesText, setMaxArticlesText] = useState('');
   const savedNumbersRef = React.useRef({
     rss_refresh_interval: '',
@@ -85,6 +103,7 @@ export default function RssSettingsScreen() {
               : '';
           setRefreshIntervalText(refreshInterval);
           setFetchDelayText(fetchDelay);
+          setHasFetchDelay('rss_fetch_delay' in p);
           setMaxArticlesText(maxArticles);
           savedNumbersRef.current = {
             rss_refresh_interval: refreshInterval,
@@ -152,7 +171,15 @@ export default function RssSettingsScreen() {
     <>
       <FocusAwareStatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <View style={[styles.header, { borderBottomColor: colors.surfaceOutline }]}>
+        <View
+          style={[
+            styles.header,
+            { borderBottomColor: colors.surfaceOutline },
+            glassLayout.headerStyle,
+          ]}
+          onLayout={glassLayout.onHeaderLayout}
+        >
+          <GlassHeaderBackdrop borderOverlap={1} />
           <TouchableOpacity
             onPress={() => router.back()}
             style={styles.headerButton}
@@ -167,13 +194,17 @@ export default function RssSettingsScreen() {
           <View style={styles.headerButton} />
         </View>
 
-        <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={glassLayout.contentStyle(styles.scrollContent)}
+          scrollIndicatorInsets={glassLayout.scrollIndicatorInsets}
+        >
           {/* RSS Reader */}
           <View style={styles.section}>
             <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
               {t('screens.settings.qbittorrentServer').toUpperCase()}
             </Text>
-            <View style={[styles.card, { backgroundColor: colors.surface }]}>
+            <GlassSurface glass={false} style={[styles.card, { backgroundColor: colors.surface }]}>
               <ToggleRow
                 icon="logo-rss"
                 label={t('screens.settings.rssProcessingEnabled')}
@@ -220,18 +251,22 @@ export default function RssSettingsScreen() {
                   )
                 }
               />
-              <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
-              <NumberRow
-                label={t('screens.settings.rssFetchDelay')}
-                unit={t('screens.settings.rssSeconds')}
-                value={fetchDelayText}
-                disabled={disabled}
-                colors={colors}
-                onChangeText={setFetchDelayText}
-                onBlur={() =>
-                  void handleNumberBlur('rss_fetch_delay', fetchDelayText, setFetchDelayText)
-                }
-              />
+              {hasFetchDelay && (
+                <>
+                  <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
+                  <NumberRow
+                    label={t('screens.settings.rssFetchDelay')}
+                    unit={t('screens.settings.rssSeconds')}
+                    value={fetchDelayText}
+                    disabled={disabled}
+                    colors={colors}
+                    onChangeText={setFetchDelayText}
+                    onBlur={() =>
+                      void handleNumberBlur('rss_fetch_delay', fetchDelayText, setFetchDelayText)
+                    }
+                  />
+                </>
+              )}
               <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
               <NumberRow
                 label={t('screens.settings.rssMaxArticlesPerFeed')}
@@ -247,7 +282,7 @@ export default function RssSettingsScreen() {
                   )
                 }
               />
-            </View>
+            </GlassSurface>
           </View>
 
           {/* RSS Smart Episode Filter */}
@@ -255,7 +290,7 @@ export default function RssSettingsScreen() {
             <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
               {t('screens.settings.rssSmartFilter').toUpperCase()}
             </Text>
-            <View style={[styles.card, { backgroundColor: colors.surface }]}>
+            <GlassSurface glass={false} style={[styles.card, { backgroundColor: colors.surface }]}>
               <ToggleRow
                 icon="film-outline"
                 label={t('screens.settings.rssDownloadRepackProper')}
@@ -308,7 +343,7 @@ export default function RssSettingsScreen() {
                   textAlignVertical="top"
                 />
               </View>
-            </View>
+            </GlassSurface>
           </View>
 
           <View style={{ height: 40 }} />

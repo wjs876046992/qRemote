@@ -31,6 +31,10 @@ import { useTranslation } from 'react-i18next';
 import * as Clipboard from 'expo-clipboard';
 import { useServer } from '@/context/ServerContext';
 import { useTheme } from '@/context/ThemeContext';
+import { GlassSurface } from '@/components/GlassSurface';
+import { GlassHeaderBackdrop } from '@/components/GlassHeaderBackdrop';
+import { useGlassTabScreenLayout } from '@/hooks/useGlassTabScreenLayout';
+import { useReadableLayout } from '@/hooks/useReadableLayout';
 import { useToast } from '@/context/ToastContext';
 import { useTorrents } from '@/context/TorrentContext';
 import { isReconnectableError } from '@/hooks/useReactiveReconnect';
@@ -114,23 +118,54 @@ function trackerStatusColor(
 export default function TorrentDetail() {
   const { hash } = useLocalSearchParams<{ hash: string }>();
   const router = useRouter();
+  // Deep links can land here with nothing to go back to.
+  const close = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/');
+    }
+  }, [router]);
+  return <TorrentDetailView hash={hash} onClose={close} />;
+}
+
+interface TorrentDetailViewProps {
+  hash: string;
+  /** Leave the detail: pop the route, or clear the split view's pane. */
+  onClose: () => void;
+  /** Rendered in the split view's detail pane rather than as its own screen. */
+  embedded?: boolean;
+}
+
+/**
+ * The torrent detail itself. The route above renders it full screen; on wide
+ * windows the Torrents tab also renders it beside the list (split view).
+ */
+export function TorrentDetailView({ hash, onClose, embedded = false }: TorrentDetailViewProps) {
+  const router = useRouter();
   const navigation = useNavigation();
   const { isConnected, isLoading, isReconnecting } = useServer();
   const { features } = useApiFeatures();
   const { colors, isDark } = useTheme();
+  const glassLayout = useGlassTabScreenLayout();
   const { showToast } = useToast();
   const { categories, tags } = useTorrents();
   const { t } = useTranslation();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
-  const graphWidth = Math.max(120, windowWidth - 64);
+  // Content column width: the window minus side safe-area insets and, on wide
+  // windows, the readable-width gutters (equals windowWidth on a regular iPhone).
+  const { contentWidth } = useReadableLayout();
+  const graphWidth = Math.max(120, contentWidth - 64);
   const insets = useSafeAreaInsets();
 
   useLayoutEffect(() => {
+    // In the split view's pane this isn't its own screen — leave the list's alone.
+    if (embedded) return;
     navigation.setOptions({
       gestureEnabled: true,
       fullScreenGestureEnabled: true,
     });
-  }, [navigation]);
+  }, [navigation, embedded]);
 
   const [torrent, setTorrent] = useState<TorrentInfo | null>(null);
   const [properties, setProperties] = useState<TorrentProperties | null>(null);
@@ -256,13 +291,8 @@ export default function TorrentDetail() {
       intervalRef.current = null;
     }
     showToast(t('torrentDetail.torrentRemoved'), 'error');
-    // Deep links can land here with nothing to go back to.
-    if (router.canGoBack()) {
-      router.back();
-    } else {
-      router.replace('/');
-    }
-  }, [showToast, t, router]);
+    onClose();
+  }, [showToast, t, onClose]);
 
   const loadTorrentData = async () => {
     try {
@@ -460,12 +490,23 @@ export default function TorrentDetail() {
   const handleConfirmDelete = async (deleteFiles: boolean) => {
     if (!torrent) return;
     setDeleteConfirmVisible(false);
+    // Hold the "torrent gone" latch for the duration of the delete: a poll tick
+    // that lands mid-request sees the torrent missing and would otherwise pop
+    // the screen too, so router.back() ran twice.
+    const wasGone = torrentGoneRef.current;
+    torrentGoneRef.current = true;
     try {
       await torrentsApi.deleteTorrents([torrent.hash], deleteFiles);
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
       haptics.success();
       showToast(t('toast.torrentDeleted'), 'success');
-      router.back();
+      if (wasGone) return; // handleTorrentGone already left the screen
+      onClose();
     } catch (error: unknown) {
+      torrentGoneRef.current = wasGone;
       showToast(getErrorMessage(error), 'error');
     }
   };
@@ -1509,13 +1550,21 @@ export default function TorrentDetail() {
     <>
       <FocusAwareStatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={[]}>
-        <View style={[styles.topBar, { borderBottomColor: colors.surfaceOutline }]}>
+        <View
+          style={[
+            styles.topBar,
+            { borderBottomColor: colors.surfaceOutline },
+            glassLayout.headerStyle,
+          ]}
+          onLayout={glassLayout.onHeaderLayout}
+        >
+          <GlassHeaderBackdrop borderOverlap={1} />
           <TouchableOpacity
             style={styles.backButton}
-            onPress={() => router.back()}
-            accessibilityLabel={t('common.back')}
+            onPress={onClose}
+            accessibilityLabel={embedded ? t('common.close') : t('common.back')}
           >
-            <Ionicons name="chevron-back" size={24} color={colors.text} />
+            <Ionicons name={embedded ? 'close' : 'chevron-back'} size={24} color={colors.text} />
           </TouchableOpacity>
           <View style={styles.topBarActions}>
             <TouchableOpacity
@@ -1540,17 +1589,22 @@ export default function TorrentDetail() {
 
         <ScrollView
           style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={glassLayout.contentStyle(styles.scrollContent)}
           refreshControl={
             <RefreshControl
+              progressViewOffset={glassLayout.topInset}
               refreshing={refreshing}
               onRefresh={handleRefresh}
               tintColor={colors.primary}
             />
           }
+          scrollIndicatorInsets={glassLayout.scrollIndicatorInsets}
         >
           {/* ── Hero ────────────────────────────────────────────── */}
-          <View style={[styles.heroCard, { backgroundColor: colors.surface }]}>
+          <GlassSurface
+            glass={false}
+            style={[styles.heroCard, { backgroundColor: colors.surface }]}
+          >
             <View style={styles.heroHeaderRow}>
               <Text style={[styles.heroName, { color: colors.text }]} numberOfLines={3}>
                 {torrent.name}
@@ -1772,7 +1826,7 @@ export default function TorrentDetail() {
                 })}
               </Text>
             )}
-          </View>
+          </GlassSurface>
 
           {/* ── Actions ─────────────────────────────────────────── */}
           <View style={styles.actionsRow}>
@@ -1802,7 +1856,10 @@ export default function TorrentDetail() {
           <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
             {t('torrentDetail.general')}
           </Text>
-          <View style={[styles.sectionCard, { backgroundColor: colors.surface }]}>
+          <GlassSurface
+            glass={false}
+            style={[styles.sectionCard, { backgroundColor: colors.surface }]}
+          >
             {renderRows([
               properties &&
                 editablePathRow(
@@ -1817,13 +1874,16 @@ export default function TorrentDetail() {
               ),
               tagsBadgeRow(t('torrentDetail.tags'), torrent.tags || '', handleAddTags),
             ])}
-          </View>
+          </GlassSurface>
 
           {/* ── TRANSFER ────────────────────────────────────────── */}
           <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
             {t('torrentDetail.transfer')}
           </Text>
-          <View style={[styles.sectionCard, { backgroundColor: colors.surface }]}>
+          <GlassSurface
+            glass={false}
+            style={[styles.sectionCard, { backgroundColor: colors.surface }]}
+          >
             {renderRows([
               staticRow(
                 t('torrentDetail.downloaded'),
@@ -1860,13 +1920,16 @@ export default function TorrentDetail() {
                 handleSetSeedingTimeLimit,
               ),
             ])}
-          </View>
+          </GlassSurface>
 
           {/* ── NETWORK ─────────────────────────────────────────── */}
           <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
             {t('torrentDetail.network')}
           </Text>
-          <View style={[styles.sectionCard, { backgroundColor: colors.surface }]}>
+          <GlassSurface
+            glass={false}
+            style={[styles.sectionCard, { backgroundColor: colors.surface }]}
+          >
             {renderRows([
               torrent.popularity != null &&
                 staticRow(t('torrentDetail.popularity'), torrent.popularity.toFixed(2)),
@@ -1888,13 +1951,16 @@ export default function TorrentDetail() {
               staticRow(t('torrentDetail.encryption'), encryptionLabel),
               statusRow(t('torrentDetail.private'), privateLabel, privateColor),
             ])}
-          </View>
+          </GlassSurface>
 
           {/* ── CONTENT ─────────────────────────────────────────── */}
           <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
             {t('torrentDetail.content')}
           </Text>
-          <View style={[styles.sectionCard, { backgroundColor: colors.surface }]}>
+          <GlassSurface
+            glass={false}
+            style={[styles.sectionCard, { backgroundColor: colors.surface }]}
+          >
             {renderRows([
               navRow(
                 t('torrentDetail.files'),
@@ -1909,13 +1975,16 @@ export default function TorrentDetail() {
                 () => router.push(`/torrent/manage-trackers?hash=${hash}`),
               ),
             ])}
-          </View>
+          </GlassSurface>
 
           {/* ── ADVANCED ────────────────────────────────────────── */}
           <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
             {t('torrentDetail.advanced')}
           </Text>
-          <View style={[styles.sectionCard, { backgroundColor: colors.surface }]}>
+          <GlassSurface
+            glass={false}
+            style={[styles.sectionCard, { backgroundColor: colors.surface }]}
+          >
             {renderRows([
               tappableRow(t('torrentDetail.priority'), priorityDisplay, () =>
                 setPriorityPickerVisible(true),
@@ -1947,19 +2016,22 @@ export default function TorrentDetail() {
               ),
               renameRow(t('torrentDetail.rename'), torrent.name, handleRenameTorrent),
             ])}
-          </View>
+          </GlassSurface>
 
           {/* ── DATES ───────────────────────────────────────────── */}
           <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
             {t('torrentDetail.dates')}
           </Text>
-          <View style={[styles.sectionCard, { backgroundColor: colors.surface }]}>
+          <GlassSurface
+            glass={false}
+            style={[styles.sectionCard, { backgroundColor: colors.surface }]}
+          >
             {renderRows([
               staticRow(t('torrentDetail.added'), formatDate(torrent.added_on)),
               staticRow(t('torrentDetail.completed'), formatDate(torrent.completion_on)),
               staticRow(t('torrentDetail.lastActivity'), formatDate(torrent.last_activity)),
             ])}
-          </View>
+          </GlassSurface>
         </ScrollView>
 
         {/* ── Modals ──────────────────────────────────────────── */}
@@ -2091,7 +2163,7 @@ export default function TorrentDetail() {
             activeOpacity={1}
             onPress={() => setRenameTooltipVisible(false)}
           >
-            <View style={[styles.tooltipContainer, { backgroundColor: colors.surface }]}>
+            <GlassSurface style={[styles.tooltipContainer, { backgroundColor: colors.surface }]}>
               <View style={styles.tooltipHeader}>
                 <Ionicons name="create-outline" size={24} color={colors.primary} />
                 <Text style={[styles.tooltipTitle, { color: colors.text }]}>
@@ -2107,7 +2179,7 @@ export default function TorrentDetail() {
               >
                 <Text style={styles.tooltipButtonText}>{t('server.gotIt')}</Text>
               </TouchableOpacity>
-            </View>
+            </GlassSurface>
           </TouchableOpacity>
         </Modal>
 
@@ -2119,7 +2191,7 @@ export default function TorrentDetail() {
           onRequestClose={() => setPeersModalVisible(false)}
         >
           <View style={styles.peersModalOverlay}>
-            <View style={[styles.peersModalContent, { backgroundColor: colors.surface }]}>
+            <GlassSurface style={[styles.peersModalContent, { backgroundColor: colors.surface }]}>
               <View style={[styles.peersModalHeader, { borderBottomColor: colors.surfaceOutline }]}>
                 <Text style={[styles.peersModalTitle, { color: colors.text }]}>
                   {t('torrentDetail.connectedPeers')}
@@ -2176,7 +2248,7 @@ export default function TorrentDetail() {
                   ))}
                 </ScrollView>
               )}
-            </View>
+            </GlassSurface>
           </View>
         </Modal>
 
@@ -2212,7 +2284,7 @@ export default function TorrentDetail() {
                 );
 
                 return (
-                  <View
+                  <GlassSurface
                     onLayout={(e: LayoutChangeEvent) =>
                       setPathPopoverHeight(e.nativeEvent.layout.height)
                     }
@@ -2261,7 +2333,7 @@ export default function TorrentDetail() {
                       <Ionicons name="copy-outline" size={16} color="#FFFFFF" />
                       <Text style={styles.pathModalCopyButtonText}>{t('common.copy')}</Text>
                     </TouchableOpacity>
-                  </View>
+                  </GlassSurface>
                 );
               })()}
           </TouchableOpacity>

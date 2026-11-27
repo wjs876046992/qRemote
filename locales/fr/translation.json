@@ -68,7 +68,8 @@
       "deselectTorrent": "Désélectionner le torrent",
       "switchServer": "Changer de Serveur",
       "manageServers": "Gérer les Serveurs",
-      "currentServer": "Actuel"
+      "currentServer": "Actuel",
+      "splitPlaceholder": "Sélectionnez un torrent pour voir ses détails ici"
     },
     "addTorrent": {
       "none": "Aucun",
@@ -103,6 +104,8 @@
       "numberPlaceholder": "0",
       "dlLimit": "Limite de téléchargement",
       "upLimit": "Limite d'envoi",
+      "dlLimitKib": "Limite de téléchargement (KiB/s)",
+      "upLimitKib": "Limite d'envoi (KiB/s)",
       "ratioLimit": "Limite de ratio",
       "seedingTimeLimit": "Limite de temps de partage",
       "cookie": "Cookie",
@@ -135,6 +138,7 @@
       "emailSmtpServer": "Serveur SMTP",
       "emailSmtpServerPlaceholder": "smtp.exemple.com:465",
       "emailEncryption": "Chiffrement SMTP",
+      "emailRequiresSsl": "SMTP exige SSL",
       "emailEncryptionNone": "Aucun",
       "emailEncryptionStartTls": "STARTTLS",
       "emailEncryptionSmtps": "SMTPS",
@@ -415,6 +419,11 @@
       "detailedCardView": "Vue détaillée",
       "detailedCardFields": "Champs de la carte détaillée",
       "detailedCardFieldsDescription": "Choisissez les champs affichés dans la vue détaillée",
+      "solidPinnedHeader": "En-tête opaque fixe",
+      "solidPinnedHeaderDescription": "Garder l'en-tête des torrents opaque et fixé en haut pendant le défilement",
+      "liquidGlass": "Liquid Glass",
+      "liquidGlassDescription": "Effet de verre sur les en-têtes, cartes, menus et la barre d'onglets. La barre d'onglets change après le redémarrage de l'app.",
+      "liquidGlassUnavailable": "Nécessite iOS 26 et la dernière version de l'app",
       "detailedCardGridColumns": "Colonnes de la grille",
       "detailedCardGridColumnsDescription": "Nombre de colonnes de stats par ligne",
       "detailedCardGridColumns3": "3 colonnes",
@@ -448,7 +457,8 @@
       "searchAddOpensDialogueHint": "Appuyer sur + sur un résultat de recherche ouvre la boîte de dialogue d'ajout au lieu d'ajouter directement.",
       "defaultColors": "Couleurs par défaut",
       "defaultCategoryColor": "Couleur de catégorie par défaut",
-      "defaultTagColor": "Couleur d'étiquette par défaut"
+      "defaultTagColor": "Couleur d'étiquette par défaut",
+      "splitPlaceholder": "Choisissez un réglage pour l'afficher ici"
     },
     "transfer": {
       "title": "Transfert",
@@ -663,7 +673,12 @@
       "cartClearAll": "Tout effacer",
       "cartCheckout": "Continuer ({{count}})",
       "cartAccessibility_one": "File d'ajout, {{count}} torrent",
-      "cartAccessibility_other": "File d'ajout, {{count}} torrents"
+      "cartAccessibility_other": "File d'ajout, {{count}} torrents",
+      "videoCodec": "Codec vidéo",
+      "releaseSource": "Source",
+      "defaultMinSeeders": "Seeders minimum par défaut",
+      "defaultMinSeedersHint": "Chaque nouvelle recherche commence avec ce minimum",
+      "noMinimum": "Aucun minimum"
     },
     "rss": {
       "feedsTitle": "Flux RSS",
@@ -1179,6 +1194,7 @@
   },
   "toast": {
     "pluginAddDefaultOptions": "Ajouté via son plugin de recherche avec les options par défaut de qBittorrent : cette version ne peut pas lui appliquer le chemin de sauvegarde, la catégorie ni les étiquettes.",
+    "someAlreadyInQbittorrent": "Ajoutés — certains torrents étaient déjà dans qBittorrent.",
     "notConnected": "Non connecté à un serveur. Connectez-vous d'abord.",
     "lostConnection": "Connexion perdue. Veuillez vous reconnecter.",
     "connectedTo": "Connecté à {{name}}",
@@ -1359,10 +1375,11 @@
     "rateLimitedRetry": "Requêtes limitées par le serveur. Réessayez dans {{seconds}} secondes.",
     "endpointNotFound": "Point de terminaison introuvable : {{url}}. Vérifiez votre version de qBittorrent et la compatibilité de l'API.",
     "queueingDisabled": "La file d'attente des torrents doit être activée dans qBittorrent pour modifier les priorités.",
-    "torrentExistsOrFailed": "Ce torrent existe déjà ou n'a pas pu être ajouté.",
+    "torrentExistsOrFailed": "Déjà présent dans qBittorrent, ou n'a pas pu être ajouté.",
     "unknown": "Une erreur inconnue s'est produite",
     "quiKeyRejected": "qui a rejeté la clé du proxy. Vérifiez l'URL du proxy.",
-    "quiKeyMissing": "Ce serveur qui n'a pas de clé de proxy. Modifiez-le et collez à nouveau l'URL du proxy."
+    "quiKeyMissing": "Ce serveur qui n'a pas de clé de proxy. Modifiez-le et collez à nouveau l'URL du proxy.",
+    "notQbittorrent": "Le serveur a répondu, mais pas comme qBittorrent. Vérifiez l'adresse, le port et le chemin."
   },
   "states": {
     "dlAndUl": "DL + UL",

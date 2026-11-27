@@ -20,6 +20,10 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '@/context/ThemeContext';
+import { GlassSurface } from '@/components/GlassSurface';
+import { useLiquidGlass } from '@/context/LiquidGlassContext';
+import { GlassHeaderBackdrop } from '@/components/GlassHeaderBackdrop';
+import { useGlassTabScreenLayout } from '@/hooks/useGlassTabScreenLayout';
 import { useToast } from '@/context/ToastContext';
 import { FocusAwareStatusBar } from '@/components/FocusAwareStatusBar';
 import { EmptyState } from '@/components/EmptyState';
@@ -36,6 +40,8 @@ export default function ManageTrackersScreen() {
   const { hash } = useLocalSearchParams<{ hash: string }>();
   const router = useRouter();
   const { colors, isDark } = useTheme();
+  const glassLayout = useGlassTabScreenLayout();
+  const { enabled: glass } = useLiquidGlass();
   const { showToast } = useToast();
   const { t } = useTranslation();
 
@@ -180,9 +186,15 @@ export default function ManageTrackersScreen() {
       <View
         style={[
           styles.header,
-          { backgroundColor: colors.surface, borderBottomColor: colors.surfaceOutline },
+          {
+            backgroundColor: glass ? 'transparent' : colors.surface,
+            borderBottomColor: colors.surfaceOutline,
+          },
+          glassLayout.headerStyle,
         ]}
+        onLayout={glassLayout.onHeaderLayout}
       >
+        <GlassHeaderBackdrop borderOverlap={1} />
         <TouchableOpacity
           onPress={() => router.back()}
           style={styles.backButton}
@@ -224,10 +236,17 @@ export default function ManageTrackersScreen() {
           <ActivityIndicator size="large" color={colors.primary} />
         </View>
       ) : (
-        <ScrollView style={styles.content}>
+        <ScrollView
+          contentContainerStyle={glassLayout.contentStyle()}
+          style={styles.content}
+          scrollIndicatorInsets={glassLayout.scrollIndicatorInsets}
+        >
           {/* Add New Tracker - At Top */}
           {showAddInput ? (
-            <View style={[styles.addTrackerCard, { backgroundColor: colors.surface }]}>
+            <GlassSurface
+              glass={false}
+              style={[styles.addTrackerCard, { backgroundColor: colors.surface }]}
+            >
               <Text style={[styles.addTrackerLabel, { color: colors.text }]}>New Tracker URL</Text>
               <TextInput
                 style={[
@@ -280,7 +299,7 @@ export default function ManageTrackersScreen() {
                   )}
                 </TouchableOpacity>
               </View>
-            </View>
+            </GlassSurface>
           ) : (
             <TouchableOpacity
               style={[styles.addButton, { backgroundColor: colors.primary }]}
@@ -295,7 +314,8 @@ export default function ManageTrackersScreen() {
 
           {/* Edit Tracker */}
           {editingTracker && (
-            <View
+            <GlassSurface
+              glass={false}
               style={[styles.addTrackerCard, { backgroundColor: colors.surface, marginTop: 12 }]}
             >
               <Text style={[styles.addTrackerLabel, { color: colors.text }]}>Edit Tracker URL</Text>
@@ -350,7 +370,7 @@ export default function ManageTrackersScreen() {
                   )}
                 </TouchableOpacity>
               </View>
-            </View>
+            </GlassSurface>
           )}
 
           {/* Trackers List */}
@@ -371,73 +391,79 @@ export default function ManageTrackersScreen() {
               >
                 {t('screens.trackers.existingTrackers', { count: trackers.length })}
               </Text>
-              {trackers.map((tracker, index) => (
-                <View key={index} style={[styles.trackerRow, { backgroundColor: colors.surface }]}>
-                  <View style={styles.trackerInfo}>
-                    <Text style={[styles.trackerUrl, { color: colors.text }]} numberOfLines={2}>
-                      {tracker.url}
-                    </Text>
-                    <View style={styles.statusRow}>
-                      <View
-                        style={[
-                          styles.statusDot,
-                          { backgroundColor: getStatusColor(tracker.status) },
-                        ]}
-                      />
-                      <Text style={[styles.statusText, { color: colors.textSecondary }]}>
-                        {getStatusText(tracker.status)}
+              {/* Content layer: each tracker keeps its own solid card. */}
+              <View>
+                {trackers.map((tracker, index) => (
+                  <View
+                    key={index}
+                    style={[styles.trackerRow, { backgroundColor: colors.surface }]}
+                  >
+                    <View style={styles.trackerInfo}>
+                      <Text style={[styles.trackerUrl, { color: colors.text }]} numberOfLines={2}>
+                        {tracker.url}
                       </Text>
-                    </View>
-                    <View style={styles.statsRow}>
-                      <Text style={[styles.statsText, { color: colors.textSecondary }]}>
-                        {t('screens.trackers.seeds')}
-                        {': '}
-                        <Text style={{ color: colors.success }}>
-                          {formatTrackerCount(tracker.num_seeds)}
+                      <View style={styles.statusRow}>
+                        <View
+                          style={[
+                            styles.statusDot,
+                            { backgroundColor: getStatusColor(tracker.status) },
+                          ]}
+                        />
+                        <Text style={[styles.statusText, { color: colors.textSecondary }]}>
+                          {getStatusText(tracker.status)}
                         </Text>
-                      </Text>
-                      <Text style={[styles.statsText, { color: colors.textSecondary }]}>
-                        {t('screens.trackers.leeches')}
-                        {': '}
-                        <Text style={{ color: colors.text }}>
-                          {formatTrackerCount(tracker.num_leeches)}
+                      </View>
+                      <View style={styles.statsRow}>
+                        <Text style={[styles.statsText, { color: colors.textSecondary }]}>
+                          {t('screens.trackers.seeds')}
+                          {': '}
+                          <Text style={{ color: colors.success }}>
+                            {formatTrackerCount(tracker.num_seeds)}
+                          </Text>
                         </Text>
-                      </Text>
+                        <Text style={[styles.statsText, { color: colors.textSecondary }]}>
+                          {t('screens.trackers.leeches')}
+                          {': '}
+                          <Text style={{ color: colors.text }}>
+                            {formatTrackerCount(tracker.num_leeches)}
+                          </Text>
+                        </Text>
+                      </View>
+                      {tracker.msg && (
+                        <Text style={[styles.errorText, { color: colors.error }]} numberOfLines={1}>
+                          {tracker.msg}
+                        </Text>
+                      )}
                     </View>
-                    {tracker.msg && (
-                      <Text style={[styles.errorText, { color: colors.error }]} numberOfLines={1}>
-                        {tracker.msg}
-                      </Text>
-                    )}
+                    <View style={styles.trackerActions}>
+                      <TouchableOpacity
+                        style={styles.trackerActionButton}
+                        onPress={() => handleCopyTracker(tracker)}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        accessibilityLabel={t('screens.search.copyLink')}
+                      >
+                        <Ionicons name="copy-outline" size={20} color={colors.primary} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.trackerActionButton}
+                        onPress={() => handleEditTracker(tracker)}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        accessibilityLabel={t('common.edit')}
+                      >
+                        <Ionicons name="create-outline" size={20} color={colors.primary} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.trackerActionButton}
+                        onPress={() => handleRemoveTracker(tracker)}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        accessibilityLabel={t('common.delete')}
+                      >
+                        <Ionicons name="trash-outline" size={20} color={colors.error} />
+                      </TouchableOpacity>
+                    </View>
                   </View>
-                  <View style={styles.trackerActions}>
-                    <TouchableOpacity
-                      style={styles.trackerActionButton}
-                      onPress={() => handleCopyTracker(tracker)}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                      accessibilityLabel={t('screens.search.copyLink')}
-                    >
-                      <Ionicons name="copy-outline" size={20} color={colors.primary} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.trackerActionButton}
-                      onPress={() => handleEditTracker(tracker)}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                      accessibilityLabel={t('common.edit')}
-                    >
-                      <Ionicons name="create-outline" size={20} color={colors.primary} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.trackerActionButton}
-                      onPress={() => handleRemoveTracker(tracker)}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                      accessibilityLabel={t('common.delete')}
-                    >
-                      <Ionicons name="trash-outline" size={20} color={colors.error} />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ))}
+                ))}
+              </View>
             </View>
           )}
         </ScrollView>

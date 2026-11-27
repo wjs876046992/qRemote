@@ -1,0 +1,595 @@
+/**
+ * logs.tsx — Server log viewer with app-log and peer-log tabs, search, and severity filters.
+ * Pushed from Settings → Advanced ("Server Logs"); lives in the Settings stack
+ * The `/logs` URL redirects here (app/logs.tsx).
+ *
+ * Key exports: LogsScreen (default)
+ * Known issues: Hardcoded English strings (Task 3.3).
+ */
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  TouchableOpacity,
+  RefreshControl,
+  ActivityIndicator,
+  TextInput,
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
+import { useRouter } from 'expo-router';
+import { useServer } from '@/context/ServerContext';
+import { useTorrents } from '@/context/TorrentContext';
+import { useTheme } from '@/context/ThemeContext';
+import { GlassSurface } from '@/components/GlassSurface';
+import { FocusAwareStatusBar } from '@/components/FocusAwareStatusBar';
+import { GlassHeaderBackdrop } from '@/components/GlassHeaderBackdrop';
+import { useGlassTabScreenLayout } from '@/hooks/useGlassTabScreenLayout';
+import { spacing } from '@/constants/spacing';
+import { logsApi } from '@/services/api/logs';
+import { LogEntry, PeerLogEntry } from '@/types/api';
+
+export default function LogsScreen() {
+  const { t } = useTranslation();
+  const router = useRouter();
+  const { isConnected, isLoading: serverIsLoading } = useServer();
+  const { initialLoadComplete } = useTorrents();
+  const { colors, isDark } = useTheme();
+  const glassLayout = useGlassTabScreenLayout();
+  const [activeTab, setActiveTab] = useState<'app' | 'peer'>('app');
+  const [appLogs, setAppLogs] = useState<LogEntry[]>([]);
+  const [peerLogs, setPeerLogs] = useState<PeerLogEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastAppLogId, setLastAppLogId] = useState<number | undefined>(undefined);
+  const [lastPeerLogId, setLastPeerLogId] = useState<number | undefined>(undefined);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filters, setFilters] = useState({
+    normal: true,
+    info: true,
+    warning: true,
+    critical: true,
+  });
+
+  // Drop the previous session's logs the moment the connection ends:
+  // last-log-id incremental fetching assumes a single server, so stale
+  // entries would mix with (and suppress) logs from the next connection.
+  // Render-time state adjustment (not an effect) per React guidance.
+  const [wasConnected, setWasConnected] = useState(isConnected);
+  if (wasConnected !== isConnected) {
+    setWasConnected(isConnected);
+    if (!isConnected) {
+      setAppLogs([]);
+      setPeerLogs([]);
+      setLastAppLogId(undefined);
+      setLastPeerLogId(undefined);
+    }
+  }
+
+  const loadLogs = async () => {
+    try {
+      setLoading(true);
+      if (activeTab === 'app') {
+        const logs = await logsApi.getLog(
+          filters.normal,
+          filters.info,
+          filters.warning,
+          filters.critical,
+          lastAppLogId,
+        );
+        if (logs.length > 0) {
+          setAppLogs((prev) => {
+            const existingIds = new Set(prev.map((l) => l.id));
+            const newLogs = logs.filter((l) => !existingIds.has(l.id));
+            return [...prev, ...newLogs].sort((a, b) => b.id - a.id);
+          });
+          setLastAppLogId(logs[0]?.id);
+        }
+      } else {
+        const logs = await logsApi.getPeerLog(lastPeerLogId);
+        if (logs.length > 0) {
+          setPeerLogs((prev) => {
+            const existingIds = new Set(prev.map((l) => l.id));
+            const newLogs = logs.filter((l) => !existingIds.has(l.id));
+            return [...prev, ...newLogs].sort((a, b) => b.id - a.id);
+          });
+          setLastPeerLogId(logs[0]?.id);
+        }
+      }
+    } catch {
+      // Ignore log loading errors
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isConnected) {
+      loadLogs();
+    }
+    // loadLogs isn't memoized — only re-run when these deps change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected, activeTab, filters]);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    if (activeTab === 'app') {
+      setAppLogs([]);
+      setLastAppLogId(undefined);
+    } else {
+      setPeerLogs([]);
+      setLastPeerLogId(undefined);
+    }
+    await loadLogs();
+  };
+
+  const getLogTypeColor = (type: number): string => {
+    switch (type) {
+      case 1:
+        return colors.primary; // Normal
+      case 2:
+        return colors.warning; // Warning
+      case 4:
+        return colors.error; // Critical
+      default:
+        return colors.textSecondary;
+    }
+  };
+
+  const getLogTypeLabel = (type: number): string => {
+    switch (type) {
+      case 1:
+        return t('screens.logs.normal');
+      case 2:
+        return t('screens.logs.warning');
+      case 4:
+        return t('screens.logs.critical');
+      default:
+        return t('screens.logs.info');
+    }
+  };
+
+  const formatTimestamp = (timestamp: number): string => {
+    return new Date(timestamp * 1000).toLocaleString();
+  };
+
+  // Filter logs based on search query
+  const filteredAppLogs = useMemo(() => {
+    if (!searchQuery.trim()) return appLogs;
+    const query = searchQuery.toLowerCase();
+    return appLogs.filter((log) => log.message.toLowerCase().includes(query));
+  }, [appLogs, searchQuery]);
+
+  const filteredPeerLogs = useMemo(() => {
+    if (!searchQuery.trim()) return peerLogs;
+    const query = searchQuery.toLowerCase();
+    return peerLogs.filter(
+      (log) => log.ip.toLowerCase().includes(query) || log.client.toLowerCase().includes(query),
+    );
+  }, [peerLogs, searchQuery]);
+
+  const header = (
+    <View style={[styles.header, { borderBottomColor: colors.surfaceOutline }]}>
+      <GlassHeaderBackdrop borderOverlap={1} />
+      <TouchableOpacity
+        onPress={() => router.back()}
+        style={styles.headerButton}
+        activeOpacity={0.7}
+        accessibilityLabel={t('common.back')}
+      >
+        <Ionicons name="arrow-back" size={24} color={colors.text} />
+      </TouchableOpacity>
+      <Text style={[styles.headerTitle, { color: colors.text }]}>{t('screens.logs.title')}</Text>
+      <View style={styles.headerButton} />
+    </View>
+  );
+
+  // Show the "Not Connected" screen whenever there is no live connection
+  // (check FIRST). currentServer intentionally survives a disconnect, so it
+  // must not gate this screen.
+  if (!isConnected && !serverIsLoading) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <FocusAwareStatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+        {header}
+        <View style={styles.center}>
+          <Text style={[styles.message, { color: colors.text }]}>
+            {t('screens.logs.notConnected')}
+          </Text>
+          <Text style={[styles.subMessage, { color: colors.textSecondary }]}>
+            {t('screens.logs.notConnectedHint')}
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  // Show loading screen during initial app launch (server connecting or first data fetch)
+  if (!initialLoadComplete && (serverIsLoading || !isConnected)) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <FocusAwareStatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+        {header}
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={[styles.subMessage, { color: colors.textSecondary, marginTop: 16 }]}>
+            {t('common.loading')}
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  const refreshControl = (
+    <RefreshControl
+      refreshing={refreshing}
+      onRefresh={handleRefresh}
+      progressViewOffset={glassLayout.topInset}
+      tintColor={colors.primary}
+    />
+  );
+  const loadingView = (
+    <View style={styles.center}>
+      <ActivityIndicator size="large" color={colors.primary} />
+    </View>
+  );
+  const rowStyle = [styles.logItem, { backgroundColor: colors.surface }];
+
+  return (
+    <>
+      <FocusAwareStatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        {/* Top chrome (header, tabs, search, filters): floats over the list
+            while the glass tab bar is in use; an unstyled wrapper otherwise. */}
+        <View style={glassLayout.headerStyle} onLayout={glassLayout.onHeaderLayout}>
+          {header}
+          <GlassSurface
+            style={[
+              styles.tabs,
+              { backgroundColor: colors.surface, borderBottomColor: colors.surfaceOutline },
+            ]}
+          >
+            <TouchableOpacity
+              style={[styles.tab, activeTab === 'app' && { borderBottomColor: colors.primary }]}
+              onPress={() => setActiveTab('app')}
+            >
+              <Text
+                style={[
+                  styles.tabText,
+                  { color: activeTab === 'app' ? colors.primary : colors.textSecondary },
+                  activeTab === 'app' && { fontWeight: '600' },
+                ]}
+              >
+                {t('screens.logs.applicationLogs')}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.tab, activeTab === 'peer' && { borderBottomColor: colors.primary }]}
+              onPress={() => setActiveTab('peer')}
+            >
+              <Text
+                style={[
+                  styles.tabText,
+                  { color: activeTab === 'peer' ? colors.primary : colors.textSecondary },
+                  activeTab === 'peer' && { fontWeight: '600' },
+                ]}
+              >
+                {t('screens.logs.peerLogs')}
+              </Text>
+            </TouchableOpacity>
+          </GlassSurface>
+
+          {/* Search Bar */}
+          <GlassSurface style={[styles.searchContainer, { backgroundColor: colors.surface }]}>
+            <View style={[styles.searchInputContainer, { backgroundColor: colors.background }]}>
+              <Ionicons name="search" size={18} color={colors.textSecondary} />
+              <TextInput
+                style={[styles.searchInput, { color: colors.text }]}
+                placeholder={t('screens.logs.searchLogs')}
+                placeholderTextColor={colors.textSecondary}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity
+                  onPress={() => setSearchQuery('')}
+                  accessibilityLabel={t('common.clearSearch')}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Ionicons name="close-circle" size={18} color={colors.textSecondary} />
+                </TouchableOpacity>
+              )}
+            </View>
+          </GlassSurface>
+
+          {activeTab === 'app' && (
+            <GlassSurface style={[styles.filters, { backgroundColor: colors.surface }]}>
+              <Text style={[styles.filterLabel, { color: colors.textSecondary }]}>
+                {t('screens.logs.filter')}
+              </Text>
+              <TouchableOpacity
+                style={[
+                  styles.filterButton,
+                  { backgroundColor: filters.normal ? colors.primary : colors.background },
+                ]}
+                onPress={() => setFilters({ ...filters, normal: !filters.normal })}
+              >
+                <Text
+                  style={[
+                    styles.filterButtonText,
+                    { color: filters.normal ? '#FFFFFF' : colors.text },
+                  ]}
+                >
+                  {t('screens.logs.normal')}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.filterButton,
+                  { backgroundColor: filters.info ? colors.primary : colors.background },
+                ]}
+                onPress={() => setFilters({ ...filters, info: !filters.info })}
+              >
+                <Text
+                  style={[
+                    styles.filterButtonText,
+                    { color: filters.info ? '#FFFFFF' : colors.text },
+                  ]}
+                >
+                  {t('screens.logs.info')}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.filterButton,
+                  { backgroundColor: filters.warning ? colors.warning : colors.background },
+                ]}
+                onPress={() => setFilters({ ...filters, warning: !filters.warning })}
+              >
+                <Text
+                  style={[
+                    styles.filterButtonText,
+                    { color: filters.warning ? '#FFFFFF' : colors.text },
+                  ]}
+                >
+                  {t('screens.logs.warning')}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.filterButton,
+                  { backgroundColor: filters.critical ? colors.error : colors.background },
+                ]}
+                onPress={() => setFilters({ ...filters, critical: !filters.critical })}
+              >
+                <Text
+                  style={[
+                    styles.filterButtonText,
+                    { color: filters.critical ? '#FFFFFF' : colors.text },
+                  ]}
+                >
+                  {t('screens.logs.critical')}
+                </Text>
+              </TouchableOpacity>
+            </GlassSurface>
+          )}
+        </View>
+
+        {/* Content layer: the list stays solid; rows keep their own cards. */}
+        <View style={styles.scrollView}>
+          {activeTab === 'app' ? (
+            <FlatList
+              style={styles.scrollView}
+              data={filteredAppLogs}
+              keyExtractor={(log) => String(log.id)}
+              refreshControl={refreshControl}
+              contentContainerStyle={glassLayout.contentStyle()}
+              scrollIndicatorInsets={glassLayout.scrollIndicatorInsets}
+              ListEmptyComponent={
+                loading && appLogs.length === 0 && peerLogs.length === 0 ? (
+                  loadingView
+                ) : (
+                  <View style={styles.center}>
+                    <Text style={[styles.message, { color: colors.textSecondary }]}>
+                      {searchQuery
+                        ? t('screens.logs.noLogsMatch')
+                        : t('screens.logs.noLogsAvailable')}
+                    </Text>
+                  </View>
+                )
+              }
+              renderItem={({ item: log }) => (
+                <View style={rowStyle}>
+                  <View style={styles.logHeader}>
+                    <View
+                      style={[styles.logTypeBadge, { backgroundColor: getLogTypeColor(log.type) }]}
+                    >
+                      <Text style={styles.logTypeText}>{getLogTypeLabel(log.type)}</Text>
+                    </View>
+                    <Text style={[styles.logTimestamp, { color: colors.textSecondary }]}>
+                      {formatTimestamp(log.timestamp)}
+                    </Text>
+                  </View>
+                  <Text style={[styles.logMessage, { color: colors.text }]}>{log.message}</Text>
+                </View>
+              )}
+            />
+          ) : (
+            <FlatList
+              style={styles.scrollView}
+              data={filteredPeerLogs}
+              keyExtractor={(log) => String(log.id)}
+              refreshControl={refreshControl}
+              contentContainerStyle={glassLayout.contentStyle()}
+              scrollIndicatorInsets={glassLayout.scrollIndicatorInsets}
+              ListEmptyComponent={
+                loading && appLogs.length === 0 && peerLogs.length === 0 ? (
+                  loadingView
+                ) : (
+                  <View style={styles.center}>
+                    <Text style={[styles.message, { color: colors.textSecondary }]}>
+                      {searchQuery
+                        ? t('screens.logs.noPeerLogsMatch')
+                        : t('screens.logs.noPeerLogsAvailable')}
+                    </Text>
+                  </View>
+                )
+              }
+              renderItem={({ item: log }) => (
+                <View style={rowStyle}>
+                  <View style={styles.logHeader}>
+                    <Text style={[styles.logIp, { color: colors.text }]}>
+                      {log.ip}:{log.port}
+                    </Text>
+                    <Text style={[styles.logTimestamp, { color: colors.textSecondary }]}>
+                      {formatTimestamp(log.id)}
+                    </Text>
+                  </View>
+                  <Text style={[styles.logMessage, { color: colors.text }]}>
+                    {t('screens.logs.client', { value: log.client })}
+                  </Text>
+                  <Text style={[styles.logMessage, { color: colors.text }]}>
+                    {t('screens.logs.connectionLabel', { value: log.connection })}
+                  </Text>
+                  <Text style={[styles.logMessage, { color: colors.text }]}>
+                    {t('screens.logs.flags', { value: log.flags })}
+                  </Text>
+                </View>
+              )}
+            />
+          )}
+        </View>
+      </View>
+    </>
+  );
+}
+
+// Colors are applied inline via useTheme() — this sheet is layout-only.
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+  },
+  headerButton: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  center: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  message: {
+    fontSize: 16,
+  },
+  subMessage: {
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  tabs: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  tabText: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  searchContainer: {
+    padding: 12,
+    paddingBottom: 8,
+  },
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+  },
+  filters: {
+    flexDirection: 'row',
+    padding: 12,
+    paddingTop: 4,
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  filterLabel: {
+    fontSize: 14,
+    marginRight: 8,
+  },
+  filterButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 16,
+  },
+  filterButtonText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  scrollView: {
+    flex: 1,
+  },
+  logItem: {
+    padding: 12,
+    marginBottom: 8,
+    marginHorizontal: 8,
+    borderRadius: 16,
+  },
+  logHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  logTypeBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+    borderRadius: 16,
+  },
+  logTypeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  logTimestamp: {
+    fontSize: 11,
+  },
+  logMessage: {
+    fontSize: 14,
+    marginBottom: 4,
+  },
+  logIp: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+});

@@ -19,6 +19,95 @@ export interface ChangelogRelease {
 }
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    version: '3.9.13',
+    date: '2026-11-19',
+    sections: [
+      {
+        title: 'New Features',
+        items: [
+          'iPhone Duo and iPad: unfold for side-by-side torrents and details, a two-pane Settings, a Transfer dashboard, and two-column search results',
+          'Search filters for video codec (x265, x264, AV1) and source (BluRay, REMUX, WEB-DL, WEBRip)',
+          'Default minimum seeders for new searches, in Settings → Appearance',
+        ],
+      },
+      {
+        title: 'Maintenance',
+        items: [
+          'Faster connecting: RSS and search plugins load only when you open them',
+          'Less load on your server while the app is open',
+          'iPhone Duo layout refinements around the side tab bar and status bar',
+          'Server list: Connect and Disconnect buttons line up, and the full address is shown',
+        ],
+      },
+    ],
+  },
+  {
+    version: '3.9.12',
+    date: '2026-11-17',
+    sections: [
+      {
+        title: 'New Features',
+        items: [
+          'iPhone Duo support: screens now fit the large inner display, stay clear of the side tab bar and status bar, and adapt when you fold or unfold, with more to come so stay tuned',
+          'Italian translation',
+        ],
+      },
+      {
+        title: 'Bugs Fixed',
+        items: [
+          'Test Connection now catches a wrong address or port instead of reporting success from other webserver',
+        ],
+      },
+    ],
+  },
+  {
+    version: '3.9.11',
+    date: '2026-11-15',
+    sections: [
+      {
+        title: 'New Features',
+        items: [
+          'New Liquid Glass design on iOS 26 and later, with a toggle in Settings → Appearance',
+          'Refreshed Torrents screen with slimmer cards and a cleaner header',
+          'Added a Solid pinned header option to Settings → Appearance',
+          'Use another download path is now remembered per server',
+        ],
+      },
+      {
+        title: 'Bugs Fixed',
+        items: [
+          'Fixed a crash right after connecting on iPhone Duo',
+          'The sort menu and recent searches now close when you scroll the Torrents list',
+          'Improved how global seeding limits are saved to qBittorrent',
+          'Improved share limit compatibility with qBittorrent 4.6',
+          'Improved RSS rule compatibility with newer qBittorrent versions',
+          'New torrents now default to the connected server’s own save path',
+          'Add-torrent speed limits now use KiB/s like the rest of the app, with a live converted preview',
+          'Clearer message when a torrent can’t be added, such as a duplicate',
+          'Speed limit changes now show an error if the server doesn’t apply them',
+          'Improved reliability when switching servers or disconnecting',
+          'Torrent selection is now cleared when switching servers',
+          'Adding several torrents at once now succeeds even when some are already in qBittorrent',
+          'Options you edit in the add-torrent screen are no longer reset while it loads',
+          'Improved file renaming on qBittorrent 4.3.2',
+          'The self-signed certificate setting now works with hosts that include a port or path',
+        ],
+      },
+      {
+        title: 'Maintenance',
+        items: [
+          'Test Connection no longer affects your current connection',
+          'Debug reports now hide session cookies and authorization values',
+          'Server Settings now show only the options your qBittorrent version supports',
+          'Email encryption setting now matches your qBittorrent version',
+          'I2P settings are now available on qBittorrent 4.6.1 and later',
+          'Improved file renaming and priority compatibility with older qBittorrent versions',
+          'Importing servers now keeps your self-signed certificate setting',
+        ],
+      },
+    ],
+  },
+  {
     version: '3.9.01',
     date: '2026-11-08',
     sections: [

@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { TorrentInfo } from '@/types/api';
 import { useTheme } from '@/context/ThemeContext';
+import { typography } from '@/constants/typography';
 import { AnimatedProgressBar } from '@/components/AnimatedProgressBar';
 import { haptics } from '@/utils/haptics';
 import { getStateColor, getStateLabel, hasEta } from '@/utils/torrent-state';
@@ -126,6 +127,9 @@ const detailRowStyles = StyleSheet.create({
   },
 });
 
+/** Slim card: 24pt circle + 10pt slop = 44pt pause/resume tap target. */
+const SLIM_HIT_SLOP = { top: 10, bottom: 10, left: 10, right: 10 };
+
 function TorrentCardInner({
   torrent,
   onPress,
@@ -140,6 +144,9 @@ function TorrentCardInner({
   categoryColors,
   tagColors,
 }: TorrentCardProps) {
+  // Compact cards use the slim layout (tighter padding and row gaps, one step
+  // smaller name) so more torrents fit; detailed cards keep their spacing.
+  const slim = compact;
   const { colors } = useTheme();
   const { t } = useTranslation();
   const menuButtonRef = useRef<React.ComponentRef<typeof TouchableOpacity>>(null);
@@ -322,11 +329,15 @@ function TorrentCardInner({
           borderLeftColor: stateColor,
         },
         isPaused && styles.cardPaused,
+        slim && styles.cardSlim,
       ]}
     >
       {/* Line 1: Torrent name + tinted state badge + three-dot menu */}
-      <View style={styles.headerRow}>
-        <Text style={[styles.name, { color: colors.text }]} numberOfLines={2}>
+      <View style={[styles.headerRow, slim && styles.headerRowSlim]}>
+        <Text
+          style={[styles.name, slim && styles.nameSlim, { color: colors.text }]}
+          numberOfLines={2}
+        >
           {torrent.name}
         </Text>
         <View style={styles.badge}>
@@ -347,7 +358,7 @@ function TorrentCardInner({
               e.stopPropagation?.();
               handleMenuPress();
             }}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            hitSlop={slim ? SLIM_HIT_SLOP : { top: 8, bottom: 8, left: 8, right: 8 }}
             style={styles.menuButton}
             activeOpacity={0.6}
             accessibilityLabel={t('actions.torrentMenu')}
@@ -378,10 +389,11 @@ function TorrentCardInner({
               haptics.medium();
               onPauseResume();
             }}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            hitSlop={slim ? SLIM_HIT_SLOP : { top: 8, bottom: 8, left: 8, right: 8 }}
             style={[
               styles.pauseCircle,
               !compact && styles.pauseCircleDetailed,
+              slim && styles.pauseCircleSlim,
               { backgroundColor: stateColor },
             ]}
             activeOpacity={0.7}
@@ -530,6 +542,23 @@ const styles = StyleSheet.create({
     marginVertical: spacing.xs,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
+  },
+  cardSlim: {
+    marginVertical: spacing.xs / 2,
+    paddingVertical: spacing.xs + spacing.xs / 2,
+  },
+  headerRowSlim: {
+    marginBottom: 0,
+  },
+  // One step down the type scale (15 → typography.smallSemibold 14).
+  nameSlim: {
+    ...typography.smallSemibold,
+    paddingBottom: 0,
+  },
+  // Lets the 24pt circle overlap the row's vertical space instead of setting
+  // the row's height, so the progress line is only as tall as the bar.
+  pauseCircleSlim: {
+    marginVertical: -spacing.xs,
   },
   cardPaused: {
     opacity: 0.75,

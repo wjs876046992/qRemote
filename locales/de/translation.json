@@ -68,7 +68,8 @@
       "deselectTorrent": "Torrent abwählen",
       "switchServer": "Server wechseln",
       "manageServers": "Server verwalten",
-      "currentServer": "Aktuell"
+      "currentServer": "Aktuell",
+      "splitPlaceholder": "Wähle einen Torrent, um hier seine Details zu sehen"
     },
     "addTorrent": {
       "none": "Keiner",
@@ -103,6 +104,8 @@
       "numberPlaceholder": "0",
       "dlLimit": "Download-Limit",
       "upLimit": "Upload-Limit",
+      "dlLimitKib": "Download-Limit (KiB/s)",
+      "upLimitKib": "Upload-Limit (KiB/s)",
       "ratioLimit": "Verhältnis-Limit",
       "seedingTimeLimit": "Seed-Zeit-Limit",
       "cookie": "Cookie",
@@ -135,6 +138,7 @@
       "emailSmtpServer": "SMTP-Server",
       "emailSmtpServerPlaceholder": "smtp.beispiel.de:465",
       "emailEncryption": "SMTP-Verschlüsselung",
+      "emailRequiresSsl": "SMTP erfordert SSL",
       "emailEncryptionNone": "Keine",
       "emailEncryptionStartTls": "STARTTLS",
       "emailEncryptionSmtps": "SMTPS",
@@ -415,6 +419,11 @@
       "detailedCardView": "Detailansicht",
       "detailedCardFields": "Detailkartenfelder",
       "detailedCardFieldsDescription": "Wähle Felder für die Detailkartenansicht",
+      "solidPinnedHeader": "Fester, deckender Kopfbereich",
+      "solidPinnedHeaderDescription": "Torrent-Kopfbereich beim Scrollen deckend oben fixiert lassen",
+      "liquidGlass": "Liquid Glass",
+      "liquidGlassDescription": "Glaseffekt für Kopfbereiche, Karten, Menüs und die Tableiste. Die Tableiste wechselt nach einem Neustart der App.",
+      "liquidGlassUnavailable": "Erfordert iOS 26 und die neueste App-Version",
       "detailedCardGridColumns": "Rasterspalten",
       "detailedCardGridColumnsDescription": "Anzahl der Statistikspalten pro Zeile",
       "detailedCardGridColumns3": "3 Spalten",
@@ -448,7 +457,8 @@
       "searchAddOpensDialogueHint": "Ein Tippen auf + bei einem Suchergebnis öffnet den Torrent-Hinzufügen-Dialog, statt sofort hinzuzufügen.",
       "defaultColors": "Standardfarben",
       "defaultCategoryColor": "Standardfarbe für Kategorien",
-      "defaultTagColor": "Standardfarbe für Tags"
+      "defaultTagColor": "Standardfarbe für Tags",
+      "splitPlaceholder": "Wähle eine Einstellung, um sie hier zu sehen"
     },
     "transfer": {
       "title": "Übertragung",
@@ -663,7 +673,12 @@
       "cartClearAll": "Alle entfernen",
       "cartCheckout": "Weiter ({{count}})",
       "cartAccessibility_one": "Warteschlange, {{count}} Torrent",
-      "cartAccessibility_other": "Warteschlange, {{count}} Torrents"
+      "cartAccessibility_other": "Warteschlange, {{count}} Torrents",
+      "videoCodec": "Video-Codec",
+      "releaseSource": "Quelle",
+      "defaultMinSeeders": "Standard-Mindestanzahl Seeder",
+      "defaultMinSeedersHint": "Jede neue Suche startet mit diesem Minimum",
+      "noMinimum": "Kein Minimum"
     },
     "rss": {
       "feedsTitle": "RSS-Feeds",
@@ -1179,6 +1194,7 @@
   },
   "toast": {
     "pluginAddDefaultOptions": "Über das zugehörige Suchplugin mit den Standardoptionen von qBittorrent hinzugefügt – diese Version kann Speicherpfad, Kategorie oder Tags dafür nicht anwenden.",
+    "someAlreadyInQbittorrent": "Hinzugefügt – einige Torrents waren bereits in qBittorrent vorhanden.",
     "notConnected": "Nicht mit einem Server verbunden. Bitte zuerst verbinden.",
     "lostConnection": "Verbindung verloren. Bitte erneut verbinden.",
     "connectedTo": "Verbunden mit {{name}}",
@@ -1359,10 +1375,11 @@
     "rateLimitedRetry": "Anfragen vom Server begrenzt. Bitte in {{seconds}} Sekunden erneut versuchen.",
     "endpointNotFound": "Endpunkt nicht gefunden: {{url}}. Bitte qBittorrent-Version und API-Kompatibilität prüfen.",
     "queueingDisabled": "Die Torrent-Warteschlange muss in qBittorrent aktiviert sein, um Prioritäten zu ändern.",
-    "torrentExistsOrFailed": "Dieser Torrent existiert bereits oder konnte nicht hinzugefügt werden.",
+    "torrentExistsOrFailed": "Bereits in qBittorrent vorhanden oder konnte nicht hinzugefügt werden.",
     "unknown": "Ein unbekannter Fehler ist aufgetreten",
     "quiKeyRejected": "qui hat den Proxy-Schlüssel abgelehnt. Prüfe die Proxy-URL.",
-    "quiKeyMissing": "Dieser qui-Server hat keinen Proxy-Schlüssel. Bearbeite ihn und füge die Proxy-URL erneut ein."
+    "quiKeyMissing": "Dieser qui-Server hat keinen Proxy-Schlüssel. Bearbeite ihn und füge die Proxy-URL erneut ein.",
+    "notQbittorrent": "Der Server hat geantwortet, aber nicht wie qBittorrent. Prüfe Adresse, Port und Pfad."
   },
   "states": {
     "dlAndUl": "DL + UL",

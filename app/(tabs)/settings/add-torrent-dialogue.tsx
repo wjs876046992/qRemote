@@ -4,6 +4,9 @@ import { useTranslation } from 'react-i18next';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/context/ThemeContext';
+import { GlassSurface } from '@/components/GlassSurface';
+import { GlassHeaderBackdrop } from '@/components/GlassHeaderBackdrop';
+import { useGlassTabScreenLayout } from '@/hooks/useGlassTabScreenLayout';
 import { FocusAwareStatusBar } from '@/components/FocusAwareStatusBar';
 import { storageService } from '@/services/storage';
 import { AppPreferences, AddTorrentDialogField, DEFAULT_PREFERENCES } from '@/types/preferences';
@@ -35,6 +38,7 @@ export default function AddTorrentDialogueSettingsScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const { isDark, colors } = useTheme();
+  const glassLayout = useGlassTabScreenLayout();
 
   const [useFull, setUseFull] = useState(false);
   const [fields, setFields] = useState<Record<AddTorrentDialogField, boolean>>(
@@ -174,7 +178,15 @@ export default function AddTorrentDialogueSettingsScreen() {
     <>
       <FocusAwareStatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <View style={[styles.header, { borderBottomColor: colors.surfaceOutline }]}>
+        <View
+          style={[
+            styles.header,
+            { borderBottomColor: colors.surfaceOutline },
+            glassLayout.headerStyle,
+          ]}
+          onLayout={glassLayout.onHeaderLayout}
+        >
+          <GlassHeaderBackdrop borderOverlap={1} />
           <TouchableOpacity
             onPress={() => router.back()}
             style={styles.headerButton}
@@ -189,12 +201,16 @@ export default function AddTorrentDialogueSettingsScreen() {
           <View style={styles.headerButton} />
         </View>
 
-        <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={glassLayout.contentStyle(styles.scrollContent)}
+          scrollIndicatorInsets={glassLayout.scrollIndicatorInsets}
+        >
           <View style={styles.section}>
             <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
               {t('screens.settings.addTorrentDialogue').toUpperCase()}
             </Text>
-            <View style={[styles.card, { backgroundColor: colors.surface }]}>
+            <GlassSurface glass={false} style={[styles.card, { backgroundColor: colors.surface }]}>
               <View style={styles.settingRow}>
                 <View style={styles.settingLeft}>
                   <Ionicons name="albums-outline" size={22} color={colors.primary} />
@@ -217,7 +233,7 @@ export default function AddTorrentDialogueSettingsScreen() {
                   ios_backgroundColor={colors.surfaceOutline}
                 />
               </View>
-            </View>
+            </GlassSurface>
           </View>
 
           {useFull && (
@@ -225,7 +241,10 @@ export default function AddTorrentDialogueSettingsScreen() {
               <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
                 {t('screens.settings.fullDialogueFields').toUpperCase()}
               </Text>
-              <View style={[styles.card, { backgroundColor: colors.surface }]}>
+              <GlassSurface
+                glass={false}
+                style={[styles.card, { backgroundColor: colors.surface }]}
+              >
                 {FIELD_ORDER.map((field, idx) => {
                   const meta = fieldMeta[field];
                   const value = !!fields[field];
@@ -255,7 +274,7 @@ export default function AddTorrentDialogueSettingsScreen() {
                     </React.Fragment>
                   );
                 })}
-              </View>
+              </GlassSurface>
             </View>
           )}
         </ScrollView>

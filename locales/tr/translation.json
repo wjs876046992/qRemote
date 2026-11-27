@@ -89,7 +89,8 @@
       "deselectTorrent": "Torrentin seçimini kaldır",
       "switchServer": "Sunucu Değiştir",
       "manageServers": "Sunucuları Yönet",
-      "currentServer": "Geçerli"
+      "currentServer": "Geçerli",
+      "splitPlaceholder": "Ayrıntılarını burada görmek için bir torrent seçin"
     },
     "addTorrent": {
       "none": "Yok",
@@ -124,6 +125,8 @@
       "numberPlaceholder": "0",
       "dlLimit": "İndirme sınırı",
       "upLimit": "Gönderme sınırı",
+      "dlLimitKib": "İndirme sınırı (KiB/s)",
+      "upLimitKib": "Gönderme sınırı (KiB/s)",
       "ratioLimit": "Paylaşım oranı sınırı",
       "seedingTimeLimit": "Paylaşım süresi sınırı",
       "cookie": "Çerez",
@@ -156,6 +159,7 @@
       "emailSmtpServer": "SMTP Sunucusu",
       "emailSmtpServerPlaceholder": "smtp.example.com:465",
       "emailEncryption": "SMTP Şifrelemesi",
+      "emailRequiresSsl": "SMTP SSL gerektirir",
       "emailEncryptionNone": "Yok",
       "emailEncryptionStartTls": "STARTTLS",
       "emailEncryptionSmtps": "SMTPS",
@@ -436,6 +440,11 @@
       "detailedCardView": "Ayrıntılı Kart Görünümü",
       "detailedCardFields": "Ayrıntılı Kart Alanları",
       "detailedCardFieldsDescription": "Ayrıntılı kart görünümünde hangi alanların görüneceğini seçin",
+      "solidPinnedHeader": "Sabit, opak başlık",
+      "solidPinnedHeaderDescription": "Kaydırırken Torrentler başlığını opak ve üstte sabit tut",
+      "liquidGlass": "Liquid Glass",
+      "liquidGlassDescription": "Başlıklarda, kartlarda, menülerde ve sekme çubuğunda cam efekti. Sekme çubuğu uygulama yeniden başlatıldıktan sonra değişir.",
+      "liquidGlassUnavailable": "iOS 26 ve uygulamanın en son sürümü gerekir",
       "detailedCardGridColumns": "Izgara Sütunları",
       "detailedCardGridColumnsDescription": "Her satırda kaç istatistik sütunu gösterileceği",
       "detailedCardGridColumns3": "3 sütun",
@@ -469,7 +478,8 @@
       "searchAddOpensDialogueHint": "Bir arama sonucundaki + düğmesine dokunmak, torrenti hemen eklemek yerine torrent ekleme penceresini açar.",
       "defaultColors": "Varsayılan Renkler",
       "defaultCategoryColor": "Varsayılan Kategori Rengi",
-      "defaultTagColor": "Varsayılan Etiket Rengi"
+      "defaultTagColor": "Varsayılan Etiket Rengi",
+      "splitPlaceholder": "Burada görmek için bir ayar seçin"
     },
     "transfer": {
       "title": "Aktarım",
@@ -684,7 +694,12 @@
       "cartClearAll": "Tümünü temizle",
       "cartCheckout": "Devam ({{count}})",
       "cartAccessibility_one": "Ekleme sırası, {{count}} torrent",
-      "cartAccessibility_other": "Ekleme sırası, {{count}} torrent"
+      "cartAccessibility_other": "Ekleme sırası, {{count}} torrent",
+      "videoCodec": "Video kodeği",
+      "releaseSource": "Kaynak",
+      "defaultMinSeeders": "Varsayılan en az paylaşan",
+      "defaultMinSeedersHint": "Her yeni arama bu en düşük değerle başlar",
+      "noMinimum": "En az yok"
     },
     "rss": {
       "feedsTitle": "RSS Akışları",
@@ -1200,6 +1215,7 @@
   },
   "toast": {
     "pluginAddDefaultOptions": "Arama eklentisi üzerinden qBittorrent'in varsayılan seçenekleriyle eklendi — bu sürüm kaydetme yolunu, kategoriyi veya etiketleri uygulayamaz.",
+    "someAlreadyInQbittorrent": "Eklendi — bazı torrentler zaten qBittorrent'teydi.",
     "notConnected": "Bir sunucuya bağlı değil. Lütfen önce bir sunucuya bağlanın.",
     "lostConnection": "Sunucuyla bağlantı kesildi. Lütfen yeniden bağlanın.",
     "connectedTo": "Bağlanıldı: {{name}}",
@@ -1380,9 +1396,10 @@
     "rateLimitedRetry": "Sunucu istekleri sınırladı. Lütfen {{seconds}} saniye sonra tekrar deneyin.",
     "endpointNotFound": "Uç nokta bulunamadı: {{url}}. Lütfen qBittorrent sürümünüzü ve API uyumluluğunu kontrol edin.",
     "queueingDisabled": "Öncelikleri değiştirmek için qBittorrent'te torrent kuyruğu etkinleştirilmelidir.",
-    "torrentExistsOrFailed": "Bu torrent zaten mevcut veya eklenemedi.",
+    "torrentExistsOrFailed": "Zaten qBittorrent'te mevcut veya eklenemedi.",
     "unknown": "Bilinmeyen bir hata oluştu",
     "quiKeyRejected": "qui proxy anahtarını reddetti. Proxy URL'sini kontrol edin.",
-    "quiKeyMissing": "Bu qui sunucusunun proxy anahtarı yok. Sunucuyu düzenleyip proxy URL'sini yeniden yapıştırın."
+    "quiKeyMissing": "Bu qui sunucusunun proxy anahtarı yok. Sunucuyu düzenleyip proxy URL'sini yeniden yapıştırın.",
+    "notQbittorrent": "Sunucu yanıt verdi ama qBittorrent gibi değil. Adresi, bağlantı noktasını ve yolu kontrol edin."
   }
 }

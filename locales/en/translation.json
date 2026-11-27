@@ -89,7 +89,8 @@
       "deselectTorrent": "Deselect torrent",
       "switchServer": "Switch Server",
       "manageServers": "Manage Servers",
-      "currentServer": "Current"
+      "currentServer": "Current",
+      "splitPlaceholder": "Select a torrent to see its details here"
     },
     "addTorrent": {
       "none": "None",
@@ -124,6 +125,8 @@
       "numberPlaceholder": "0",
       "dlLimit": "Download limit",
       "upLimit": "Upload limit",
+      "dlLimitKib": "Download limit (KiB/s)",
+      "upLimitKib": "Upload limit (KiB/s)",
       "ratioLimit": "Share ratio limit",
       "seedingTimeLimit": "Seeding time limit",
       "cookie": "Cookie",
@@ -156,6 +159,7 @@
       "emailSmtpServer": "SMTP Server",
       "emailSmtpServerPlaceholder": "smtp.example.com:465",
       "emailEncryption": "SMTP Encryption",
+      "emailRequiresSsl": "SMTP requires SSL",
       "emailEncryptionNone": "None",
       "emailEncryptionStartTls": "STARTTLS",
       "emailEncryptionSmtps": "SMTPS",
@@ -436,6 +440,11 @@
       "detailedCardView": "Detailed Card View",
       "detailedCardFields": "Detailed Card Fields",
       "detailedCardFieldsDescription": "Choose which fields appear in detailed card view",
+      "solidPinnedHeader": "Solid pinned header",
+      "solidPinnedHeaderDescription": "Keep the Torrents header opaque and fixed at the top while scrolling",
+      "liquidGlass": "Liquid Glass",
+      "liquidGlassDescription": "Glass effect on headers, cards, menus and the tab bar. The tab bar changes after the app is restarted.",
+      "liquidGlassUnavailable": "Requires iOS 26 and the latest app version",
       "detailedCardGridColumns": "Grid Columns",
       "detailedCardGridColumnsDescription": "How many stats columns to show per row",
       "detailedCardGridColumns3": "3 columns",
@@ -469,7 +478,8 @@
       "searchAddOpensDialogueHint": "Tapping + on a search result opens the add-torrent dialogue instead of adding straight away.",
       "defaultColors": "Default Colors",
       "defaultCategoryColor": "Default Category Color",
-      "defaultTagColor": "Default Tag Color"
+      "defaultTagColor": "Default Tag Color",
+      "splitPlaceholder": "Choose a setting to see it here"
     },
     "transfer": {
       "title": "Transfer",
@@ -684,7 +694,12 @@
       "cartClearAll": "Clear all",
       "cartCheckout": "Continue ({{count}})",
       "cartAccessibility_one": "Add queue, {{count}} torrent",
-      "cartAccessibility_other": "Add queue, {{count}} torrents"
+      "cartAccessibility_other": "Add queue, {{count}} torrents",
+      "videoCodec": "Video codec",
+      "releaseSource": "Source",
+      "defaultMinSeeders": "Default minimum seeders",
+      "defaultMinSeedersHint": "Every new search starts with this minimum",
+      "noMinimum": "No minimum"
     },
     "rss": {
       "feedsTitle": "RSS Feeds",
@@ -1200,6 +1215,7 @@
   },
   "toast": {
     "pluginAddDefaultOptions": "Added through its search plugin using qBittorrent's default options — this version can't apply the save path, category or tags to it.",
+    "someAlreadyInQbittorrent": "Added — some torrents were already in qBittorrent.",
     "notConnected": "Not connected to a server. Please connect to a server first.",
     "lostConnection": "Lost connection to server. Please reconnect.",
     "connectedTo": "Connected to {{name}}",
@@ -1380,9 +1396,10 @@
     "rateLimitedRetry": "Rate limited by server. Please retry after {{seconds}} seconds.",
     "endpointNotFound": "Endpoint not found: {{url}}. Please check your qBittorrent version and API compatibility.",
     "queueingDisabled": "Torrent queueing must be enabled in qBittorrent to change priorities.",
-    "torrentExistsOrFailed": "This torrent already exists or could not be added.",
+    "torrentExistsOrFailed": "Already in qBittorrent, or couldn't be added.",
     "unknown": "An unknown error occurred",
     "quiKeyRejected": "qui rejected the proxy key. Check the proxy URL.",
-    "quiKeyMissing": "This qui server has no proxy key. Edit it and paste the proxy URL again."
+    "quiKeyMissing": "This qui server has no proxy key. Edit it and paste the proxy URL again.",
+    "notQbittorrent": "The server answered, but not like qBittorrent. Check the address, port and path."
   }
 }

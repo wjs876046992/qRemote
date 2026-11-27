@@ -12,6 +12,10 @@ import { useTranslation } from 'react-i18next';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/context/ThemeContext';
+import { useLiquidGlass } from '@/context/LiquidGlassContext';
+import { GlassSurface } from '@/components/GlassSurface';
+import { GlassHeaderBackdrop } from '@/components/GlassHeaderBackdrop';
+import { useGlassTabScreenLayout } from '@/hooks/useGlassTabScreenLayout';
 import { FocusAwareStatusBar } from '@/components/FocusAwareStatusBar';
 import { OptionPicker, OptionPickerItem } from '@/components/OptionPicker';
 import { storageService } from '@/services/storage';
@@ -24,10 +28,14 @@ import { spacing, borderRadius } from '@/constants/spacing';
 import { shadows } from '@/constants/shadows';
 import { typography } from '@/constants/typography';
 
+/** Choices for Settings → Appearance → Default minimum seeders (#305). */
+const MIN_SEEDERS_OPTIONS = [0, 1, 2, 5, 10, 25, 50];
+
 export default function AppearanceSettingsScreen() {
   const { t, i18n } = useTranslation();
   const router = useRouter();
   const { isDark, colors } = useTheme();
+  const glassLayout = useGlassTabScreenLayout();
 
   const [autoRefreshInterval, setAutoRefreshInterval] = useState('1000');
   const [cardViewMode, setCardViewMode] = useState<'compact' | 'expanded'>('compact');
@@ -38,6 +46,14 @@ export default function AppearanceSettingsScreen() {
   const [searchHistoryPickerVisible, setSearchHistoryPickerVisible] = useState(false);
   const [searchDefaultSort, setSearchDefaultSort] = useState<SearchSortKey>('seeders');
   const [searchSortPickerVisible, setSearchSortPickerVisible] = useState(false);
+  const [searchMinSeeders, setSearchMinSeeders] = useState(0);
+  const [minSeedersPickerVisible, setMinSeedersPickerVisible] = useState(false);
+  const [solidPinnedHeader, setSolidPinnedHeader] = useState(false);
+  const {
+    available: liquidGlassAvailable,
+    preference: liquidGlassPreference,
+    setPreference: setLiquidGlassPreference,
+  } = useLiquidGlass();
 
   const languageOptions: OptionPickerItem[] = [
     { label: 'English', value: 'en', icon: 'language-outline' },
@@ -48,6 +64,7 @@ export default function AppearanceSettingsScreen() {
     { label: 'Русский', value: 'ru', icon: 'language-outline' },
     { label: 'Polski', value: 'pl', icon: 'language-outline' },
     { label: 'Türkçe', value: 'tr', icon: 'language-outline' },
+    { label: 'Italiano', value: 'it', icon: 'language-outline' },
   ];
 
   const searchHistoryOptions: OptionPickerItem[] = SEARCH_HISTORY_LIMIT_OPTIONS.map((limit) => ({
@@ -68,10 +85,17 @@ export default function AppearanceSettingsScreen() {
       const interval = Number(prefs.autoRefreshInterval) || 1000;
       setAutoRefreshInterval(interval.toString());
       setCardViewMode(prefs.cardViewMode || 'compact');
+      setSolidPinnedHeader(prefs.solidPinnedHeader === true);
       setSearchHistoryLimit(
         typeof prefs.torrentSearchHistoryLimit === 'number'
           ? prefs.torrentSearchHistoryLimit
           : DEFAULT_PREFERENCES.torrentSearchHistoryLimit,
+      );
+      const minSeeders = prefs.searchDefaultMinSeeders;
+      setSearchMinSeeders(
+        typeof minSeeders === 'number' && Number.isFinite(minSeeders) && minSeeders > 0
+          ? Math.floor(minSeeders)
+          : 0,
       );
       const sort = prefs.searchDefaultSort;
       setSearchDefaultSort(
@@ -126,6 +150,32 @@ export default function AppearanceSettingsScreen() {
     }
   };
 
+  const saveSolidPinnedHeader = async (value: boolean) => {
+    try {
+      await storageService.updatePreferences({ solidPinnedHeader: value });
+      setSolidPinnedHeader(value);
+    } catch {
+      // Ignore save errors
+    }
+  };
+
+  const saveLiquidGlass = async (value: boolean) => {
+    try {
+      await setLiquidGlassPreference(value);
+    } catch {
+      // Ignore save errors
+    }
+  };
+
+  const saveSearchMinSeeders = async (value: number) => {
+    try {
+      await storageService.updatePreferences({ searchDefaultMinSeeders: value });
+      setSearchMinSeeders(value);
+    } catch {
+      // Ignore save errors
+    }
+  };
+
   const saveSearchDefaultSort = async (sort: SearchSortKey) => {
     try {
       await storageService.updatePreferences({ searchDefaultSort: sort });
@@ -139,7 +189,15 @@ export default function AppearanceSettingsScreen() {
     <>
       <FocusAwareStatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <View style={[styles.header, { borderBottomColor: colors.surfaceOutline }]}>
+        <View
+          style={[
+            styles.header,
+            { borderBottomColor: colors.surfaceOutline },
+            glassLayout.headerStyle,
+          ]}
+          onLayout={glassLayout.onHeaderLayout}
+        >
+          <GlassHeaderBackdrop borderOverlap={1} />
           <TouchableOpacity
             onPress={() => router.back()}
             style={styles.headerButton}
@@ -154,13 +212,17 @@ export default function AppearanceSettingsScreen() {
           <View style={styles.headerButton} />
         </View>
 
-        <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={glassLayout.contentStyle(styles.scrollContent)}
+          scrollIndicatorInsets={glassLayout.scrollIndicatorInsets}
+        >
           {/* Language */}
           <View style={styles.section}>
             <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
               {t('screens.settings.language').toUpperCase()}
             </Text>
-            <View style={[styles.card, { backgroundColor: colors.surface }]}>
+            <GlassSurface glass={false} style={[styles.card, { backgroundColor: colors.surface }]}>
               <View style={styles.settingRow}>
                 <View style={styles.settingLeft}>
                   <Ionicons name="language-outline" size={22} color={colors.primary} />
@@ -183,7 +245,7 @@ export default function AppearanceSettingsScreen() {
                   <Ionicons name="chevron-down" size={20} color={colors.textSecondary} />
                 </TouchableOpacity>
               </View>
-            </View>
+            </GlassSurface>
           </View>
 
           {/* Theme & Colors */}
@@ -191,7 +253,7 @@ export default function AppearanceSettingsScreen() {
             <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
               {t('screens.settings.appearance').toUpperCase()}
             </Text>
-            <View style={[styles.card, { backgroundColor: colors.surface }]}>
+            <GlassSurface glass={false} style={[styles.card, { backgroundColor: colors.surface }]}>
               <TouchableOpacity
                 style={styles.settingRow}
                 onPress={() => router.push('/settings/theme')}
@@ -270,6 +332,50 @@ export default function AppearanceSettingsScreen() {
               <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
               <View style={styles.settingRow}>
                 <View style={styles.settingLeft}>
+                  <Ionicons name="browsers-outline" size={22} color={colors.primary} />
+                  <View style={styles.settingTextWrap}>
+                    <Text style={[styles.settingLabel, { color: colors.text }]}>
+                      {t('screens.settings.solidPinnedHeader')}
+                    </Text>
+                    <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>
+                      {t('screens.settings.solidPinnedHeaderDescription')}
+                    </Text>
+                  </View>
+                </View>
+                <Switch
+                  value={solidPinnedHeader}
+                  onValueChange={saveSolidPinnedHeader}
+                  trackColor={{ false: colors.surfaceOutline, true: colors.success }}
+                  ios_backgroundColor={colors.surfaceOutline}
+                />
+              </View>
+              <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
+              <View style={styles.settingRow}>
+                <View style={styles.settingLeft}>
+                  <Ionicons name="sparkles-outline" size={22} color={colors.primary} />
+                  <View style={styles.settingTextWrap}>
+                    <Text style={[styles.settingLabel, { color: colors.text }]}>
+                      {t('screens.settings.liquidGlass')}
+                    </Text>
+                    <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>
+                      {liquidGlassAvailable
+                        ? t('screens.settings.liquidGlassDescription')
+                        : t('screens.settings.liquidGlassUnavailable')}
+                    </Text>
+                  </View>
+                </View>
+                <Switch
+                  testID="liquid-glass-switch"
+                  value={liquidGlassAvailable && liquidGlassPreference}
+                  disabled={!liquidGlassAvailable}
+                  onValueChange={(value) => void saveLiquidGlass(value)}
+                  trackColor={{ false: colors.surfaceOutline, true: colors.success }}
+                  ios_backgroundColor={colors.surfaceOutline}
+                />
+              </View>
+              <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
+              <View style={styles.settingRow}>
+                <View style={styles.settingLeft}>
                   <Ionicons name="time-outline" size={22} color={colors.primary} />
                   <View style={styles.settingTextWrap}>
                     <Text style={[styles.settingLabel, { color: colors.text }]}>
@@ -322,6 +428,31 @@ export default function AppearanceSettingsScreen() {
               <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
               <View style={styles.settingRow}>
                 <View style={styles.settingLeft}>
+                  <Ionicons name="people-outline" size={22} color={colors.primary} />
+                  <View style={styles.settingTextWrap}>
+                    <Text style={[styles.settingLabel, { color: colors.text }]}>
+                      {t('screens.search.defaultMinSeeders')}
+                    </Text>
+                    <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>
+                      {t('screens.search.defaultMinSeedersHint')}
+                    </Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={styles.pickerButton}
+                  onPress={() => setMinSeedersPickerVisible(true)}
+                  activeOpacity={0.7}
+                  accessibilityLabel={t('screens.search.defaultMinSeeders')}
+                >
+                  <Text style={[styles.pickerText, { color: colors.text }]}>
+                    {searchMinSeeders > 0 ? searchMinSeeders : t('screens.search.noMinimum')}
+                  </Text>
+                  <Ionicons name="chevron-down" size={20} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+              <View style={[styles.separator, { backgroundColor: colors.surfaceOutline }]} />
+              <View style={styles.settingRow}>
+                <View style={styles.settingLeft}>
                   <Ionicons name="refresh-outline" size={22} color={colors.primary} />
                   <View>
                     <Text style={[styles.settingLabel, { color: colors.text }]}>
@@ -344,7 +475,7 @@ export default function AppearanceSettingsScreen() {
                   placeholderTextColor={colors.textSecondary}
                 />
               </View>
-            </View>
+            </GlassSurface>
           </View>
         </ScrollView>
       </View>
@@ -384,6 +515,21 @@ export default function AppearanceSettingsScreen() {
           setSearchSortPickerVisible(false);
         }}
         onClose={() => setSearchSortPickerVisible(false)}
+      />
+
+      <OptionPicker
+        visible={minSeedersPickerVisible}
+        title={t('screens.search.defaultMinSeeders')}
+        options={MIN_SEEDERS_OPTIONS.map((n) => ({
+          label: n > 0 ? String(n) : t('screens.search.noMinimum'),
+          value: String(n),
+        }))}
+        selectedValue={String(searchMinSeeders)}
+        onSelect={async (value) => {
+          await saveSearchMinSeeders(Number(value));
+          setMinSeedersPickerVisible(false);
+        }}
+        onClose={() => setMinSeedersPickerVisible(false)}
       />
     </>
   );

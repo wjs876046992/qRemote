@@ -4,6 +4,9 @@ import { useTranslation } from 'react-i18next';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/context/ThemeContext';
+import { GlassSurface } from '@/components/GlassSurface';
+import { GlassHeaderBackdrop } from '@/components/GlassHeaderBackdrop';
+import { useGlassTabScreenLayout } from '@/hooks/useGlassTabScreenLayout';
 import { FocusAwareStatusBar } from '@/components/FocusAwareStatusBar';
 import { CHANGELOG } from '@/constants/changelog';
 import { spacing, borderRadius } from '@/constants/spacing';
@@ -36,12 +39,21 @@ export default function WhatsNewScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const { isDark, colors } = useTheme();
+  const glassLayout = useGlassTabScreenLayout();
 
   return (
     <>
       <FocusAwareStatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <View style={[styles.header, { borderBottomColor: colors.surfaceOutline }]}>
+        <View
+          style={[
+            styles.header,
+            { borderBottomColor: colors.surfaceOutline },
+            glassLayout.headerStyle,
+          ]}
+          onLayout={glassLayout.onHeaderLayout}
+        >
+          <GlassHeaderBackdrop borderOverlap={1} />
           <TouchableOpacity
             onPress={() => router.back()}
             style={styles.headerButton}
@@ -59,7 +71,11 @@ export default function WhatsNewScreen() {
           <View style={styles.headerButton} />
         </View>
 
-        <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={glassLayout.contentStyle(styles.scrollContent)}
+          scrollIndicatorInsets={glassLayout.scrollIndicatorInsets}
+        >
           {CHANGELOG.map((release) => (
             <View key={release.version} style={styles.changelogRelease}>
               <View style={styles.releaseHeader}>
@@ -70,7 +86,10 @@ export default function WhatsNewScreen() {
                   {formatReleaseDate(release.date)}
                 </Text>
               </View>
-              <View style={[styles.changesList, { backgroundColor: colors.surface }]}>
+              <GlassSurface
+                glass={false}
+                style={[styles.changesList, { backgroundColor: colors.surface }]}
+              >
                 {release.sections
                   ? release.sections.map((section, sectionIndex) => (
                       <View
@@ -112,7 +131,7 @@ export default function WhatsNewScreen() {
                         <Text style={[styles.changeText, { color: colors.text }]}>{change}</Text>
                       </View>
                     ))}
-              </View>
+              </GlassSurface>
             </View>
           ))}
           <View style={{ height: 40 }} />

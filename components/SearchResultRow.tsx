@@ -256,7 +256,8 @@ const styles = StyleSheet.create({
   card: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
-    marginHorizontal: spacing.lg,
+    // 6pt side gutter, matching the Torrents list.
+    marginHorizontal: spacing.xs + spacing.xs / 2,
     marginVertical: spacing.xs,
     borderRadius: borderRadius.medium,
   },

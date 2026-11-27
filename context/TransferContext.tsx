@@ -8,12 +8,13 @@ import React, {
   ReactNode,
 } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { QueryClient, useQuery, useQueryClient } from '@tanstack/react-query';
 import { GlobalTransferInfo } from '@/types/api';
 import { transferApi } from '@/services/api/transfer';
 import { applicationApi } from '@/services/api/application';
 import { useServer } from './ServerContext';
 import { getErrorMessage } from '@/utils/error';
+import { clogWarn } from '@/services/connectivity-log';
 import { LONG_BACKGROUND_THRESHOLD_MS } from '@/constants/timing';
 import { runAfterInteractions } from '@/utils/afterInteractions';
 
@@ -32,15 +33,36 @@ interface TransferContextType {
 
 const TransferContext = createContext<TransferContextType | undefined>(undefined);
 
-async function fetchTransferInfo(): Promise<GlobalTransferInfo> {
+// app/preferences is the largest WebUI response and this poll only reads the
+// two alt limits from it, so it's shared with the tab layout's preferences
+// query and refetched at most every 30s instead of on every 3s tick. Writes
+// below invalidate it.
+const PREFERENCES_KEY = ['application', 'preferences'];
+const PREFERENCES_STALE_MS = 30_000;
+
+async function fetchTransferInfo(queryClient: QueryClient): Promise<GlobalTransferInfo> {
   const [info, altSpeedLimitsState, prefs] = await Promise.all([
     transferApi.getGlobalTransferInfo(),
     transferApi.getAlternativeSpeedLimitsState().catch(() => false),
-    applicationApi.getPreferences().catch(() => null),
+    queryClient
+      .fetchQuery({
+        queryKey: PREFERENCES_KEY,
+        queryFn: () => applicationApi.getPreferences(),
+        staleTime: PREFERENCES_STALE_MS,
+      })
+      .catch(() => null),
   ]);
+  // #334: a non-object body (empty, or text axios couldn't parse) used to be
+  // spread into a truthy object with no fields, crashing the Transfer screen.
+  // Keep the screen usable (missing fields render as "—") and log it.
+  const isObject = !!info && typeof info === 'object' && !Array.isArray(info);
+  if (!isObject) {
+    clogWarn('TRANSFER', `Unexpected transfer/info response (${typeof info})`);
+  }
+  const safeInfo = (isObject ? info : {}) as GlobalTransferInfo;
   const serverPrefs = prefs as Record<string, unknown> | null;
   return {
-    ...info,
+    ...safeInfo,
     use_alt_speed_limits: altSpeedLimitsState,
     // qBittorrent's app/preferences endpoint stores alt_*_limit in bytes/s
     // (despite the WebUI API wiki claiming KiB/s). Verified empirically: setting
@@ -60,7 +82,6 @@ export function TransferProvider({ children }: { children: ReactNode }) {
   const lastActiveTime = useRef(Date.now());
   const [isAppActive, setIsAppActive] = useState(AppState.currentState === 'active');
   const [isRecoveringState, setIsRecoveringState] = useState(false);
-  const [mutationError, setMutationError] = useState<string | null>(null);
 
   const {
     data: transferData,
@@ -69,7 +90,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
     dataUpdatedAt,
   } = useQuery<GlobalTransferInfo>({
     queryKey: ['transfer'],
-    queryFn: fetchTransferInfo,
+    queryFn: () => fetchTransferInfo(queryClient),
     refetchInterval: isAppActive ? 3000 : false,
     enabled: isConnected,
     // This poll already refetches every 3s — a query-level retry on top of
@@ -78,10 +99,9 @@ export function TransferProvider({ children }: { children: ReactNode }) {
     retry: 0,
   });
 
-  // Clear mutation errors and recovery state after each successful fetch
+  // Clear the recovery state after each successful fetch
   useEffect(() => {
     if (dataUpdatedAt > 0) {
-      setMutationError(null);
       setIsRecoveringState(false);
     }
   }, [dataUpdatedAt]);
@@ -90,7 +110,6 @@ export function TransferProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!isConnected) {
       queryClient.removeQueries({ queryKey: ['transfer'] });
-      setMutationError(null);
     }
   }, [isConnected, queryClient]);
 
@@ -123,7 +142,6 @@ export function TransferProvider({ children }: { children: ReactNode }) {
           }
 
           setIsRecoveringState(true);
-          setMutationError(null);
 
           await new Promise<void>((resolve) => {
             runAfterInteractions(() => {
@@ -155,25 +173,21 @@ export function TransferProvider({ children }: { children: ReactNode }) {
     await queryClient.invalidateQueries({ queryKey: ['transfer'] });
   }, [isConnected, queryClient]);
 
+  // Mutations let a failure propagate to the caller, which reports it (a toast)
+  // and only shows success once the server actually accepted the change. They
+  // deliberately don't feed `error`: that drives the screen-level error state
+  // and would swap the whole Transfer screen out over one rejected setting.
   const toggleAlternativeSpeedLimits = useCallback(async () => {
     if (!isConnected) return;
-    try {
-      await transferApi.toggleAlternativeSpeedLimits();
-      await queryClient.invalidateQueries({ queryKey: ['transfer'] });
-    } catch (err: unknown) {
-      setMutationError(getErrorMessage(err));
-    }
+    await transferApi.toggleAlternativeSpeedLimits();
+    await queryClient.invalidateQueries({ queryKey: ['transfer'] });
   }, [isConnected, queryClient]);
 
   const setDownloadLimit = useCallback(
     async (limit: number) => {
       if (!isConnected) return;
-      try {
-        await transferApi.setGlobalDownloadLimit(limit);
-        await queryClient.invalidateQueries({ queryKey: ['transfer'] });
-      } catch (err: unknown) {
-        setMutationError(getErrorMessage(err));
-      }
+      await transferApi.setGlobalDownloadLimit(limit);
+      await queryClient.invalidateQueries({ queryKey: ['transfer'] });
     },
     [isConnected, queryClient],
   );
@@ -181,12 +195,8 @@ export function TransferProvider({ children }: { children: ReactNode }) {
   const setUploadLimit = useCallback(
     async (limit: number) => {
       if (!isConnected) return;
-      try {
-        await transferApi.setGlobalUploadLimit(limit);
-        await queryClient.invalidateQueries({ queryKey: ['transfer'] });
-      } catch (err: unknown) {
-        setMutationError(getErrorMessage(err));
-      }
+      await transferApi.setGlobalUploadLimit(limit);
+      await queryClient.invalidateQueries({ queryKey: ['transfer'] });
     },
     [isConnected, queryClient],
   );
@@ -198,12 +208,9 @@ export function TransferProvider({ children }: { children: ReactNode }) {
   const setAltDownloadLimit = useCallback(
     async (bytesLimit: number) => {
       if (!isConnected) return;
-      try {
-        await applicationApi.setPreferences({ alt_dl_limit: bytesLimit });
-        await queryClient.invalidateQueries({ queryKey: ['transfer'] });
-      } catch (err: unknown) {
-        setMutationError(getErrorMessage(err));
-      }
+      await applicationApi.setPreferences({ alt_dl_limit: bytesLimit });
+      await queryClient.invalidateQueries({ queryKey: PREFERENCES_KEY });
+      await queryClient.invalidateQueries({ queryKey: ['transfer'] });
     },
     [isConnected, queryClient],
   );
@@ -211,19 +218,15 @@ export function TransferProvider({ children }: { children: ReactNode }) {
   const setAltUploadLimit = useCallback(
     async (bytesLimit: number) => {
       if (!isConnected) return;
-      try {
-        await applicationApi.setPreferences({ alt_up_limit: bytesLimit });
-        await queryClient.invalidateQueries({ queryKey: ['transfer'] });
-      } catch (err: unknown) {
-        setMutationError(getErrorMessage(err));
-      }
+      await applicationApi.setPreferences({ alt_up_limit: bytesLimit });
+      await queryClient.invalidateQueries({ queryKey: PREFERENCES_KEY });
+      await queryClient.invalidateQueries({ queryKey: ['transfer'] });
     },
     [isConnected, queryClient],
   );
 
   const transferInfo = isConnected ? (transferData ?? null) : null;
-  const error =
-    mutationError ?? (isRecoveringState ? null : queryError ? getErrorMessage(queryError) : null);
+  const error = isRecoveringState ? null : queryError ? getErrorMessage(queryError) : null;
 
   return (
     <TransferContext.Provider

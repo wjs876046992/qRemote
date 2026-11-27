@@ -134,6 +134,18 @@ export interface AppPreferences {
   /** Last incomplete-torrents download path typed on the add-torrent screen */
   lastDownloadPath: string;
 
+  /**
+   * Per-server (keyed by ServerConfig.id) last "Use another download path"
+   * choice on the add-torrent screen. Replaces the device-wide
+   * lastUseDownloadPath / lastDownloadPath, which leaked one server's path
+   * into another's adds; those keys are kept (never deleted) and read only as
+   * an upgrade fallback when exactly one server is saved.
+   */
+  addTorrentDownloadPathByServer: Record<
+    string,
+    { useDownloadPath: boolean; downloadPath: string }
+  >;
+
   /** Default download priority for new torrents (0 = normal) */
   defaultPriority: number;
 
@@ -218,6 +230,13 @@ export interface AppPreferences {
   searchDefaultSort?: SearchSortKey;
 
   /**
+   * Minimum seeders every new Search starts with (#305), also what "Clear
+   * filters" returns to. Absent / 0 means no minimum, so existing users see no
+   * change. Set from Settings → Appearance.
+   */
+  searchDefaultMinSeeders?: number;
+
+  /**
    * Search tab: `name` ids of the plugins the user pinned (#283). Pinned
    * plugins' chips are listed first in the plugin chip row. Names that are no
    * longer installed are ignored (and pruned the next time the pins change).
@@ -232,6 +251,26 @@ export interface AppPreferences {
 
   /** Last active tag filters on the torrents tab (OR semantics). */
   lastTagFilters?: string[];
+
+  /**
+   * Torrents tab: opaque header that stays pinned at the top while the list
+   * scrolls, instead of the translucent overlay that slides away.
+   */
+  solidPinnedHeader: boolean;
+
+  /**
+   * Liquid Glass materials (Settings → Appearance). Default on; only takes
+   * effect where glass can be drawn (iOS 26+ with the native module, Reduce
+   * Transparency / Increase Contrast off) — see context/LiquidGlassContext.tsx.
+   * Optional so stored preferences without it read as the default.
+   */
+  liquidGlassEnabled?: boolean;
+  /**
+   * Whether the RSS tab was shown on the last connection. Seeds the native
+   * tab bar at launch: showing/hiding a native tab rebuilds every tab, so
+   * starting from the last known value avoids a remount once preferences load.
+   */
+  lastRssTabVisible?: boolean;
 }
 
 export const DEFAULT_PREFERENCES: AppPreferences = {
@@ -253,6 +292,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   defaultSavePath: '',
   lastUseDownloadPath: false,
   lastDownloadPath: '',
+  addTorrentDownloadPathByServer: {},
   defaultPriority: 0,
   toastDuration: 3000,
   hapticFeedback: true,
@@ -316,4 +356,6 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   searchPinnedPlugins: [],
   lastCategoryFilter: null,
   lastTagFilters: [],
+  solidPinnedHeader: false,
+  liquidGlassEnabled: true,
 };
